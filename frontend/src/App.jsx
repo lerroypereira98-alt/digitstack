@@ -1,114 +1,48 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import './App.css';
 
-// ── Relationship Graph (SVG node simulation) ──────────────────────────────────
-const NODE_LABELS = ['CONSENSUS','CORE','HUB','MIRO','CLUSTER','NEXUS',
-  'SUPPORT','SUPPLY','LONG','SHORT','PATH','BREAKOUT','CRI_SAP',
-  'SAVES','FUND','P_ZONE','CI_SPIKE','ABOVE','MEDIAN'];
-
-function buildGraph() {
-  return NODE_LABELS.map((label, i) => {
-    const angle = (i / NODE_LABELS.length) * Math.PI * 2;
-    const r = 30 + Math.random() * 40;
-    const cx = 50 + r * Math.cos(angle) * 1.1;
-    const cy = 50 + r * Math.sin(angle) * 0.8;
-    const types = ['hub','cluster','core','node'];
-    return {
-      id: i, label,
-      x: Math.min(Math.max(cx, 8), 92),
-      y: Math.min(Math.max(cy, 8), 92),
-      type: types[Math.floor(Math.random() * types.length)],
-      val: Math.floor(Math.random() * 999) + 75,
-    };
-  });
+// ── Flash hook: fires CSS class on value change ───────────────────────────────
+function useFlash(value) {
+  const [flash, setFlash] = useState('');
+  const prev = useRef(value);
+  useEffect(() => {
+    if (prev.current !== value) {
+      const dir = value > prev.current ? 'flash-up' : 'flash-dn';
+      setFlash(dir);
+      const t = setTimeout(() => setFlash(''), 400);
+      prev.current = value;
+      return () => clearTimeout(t);
+    }
+  }, [value]);
+  return flash;
 }
 
-const INIT_NODES = buildGraph();
-const EDGES = INIT_NODES.slice(0, -1).map((n, i) => ({
-  from: i, to: (i + 1 + Math.floor(Math.random() * 3)) % INIT_NODES.length
-})).concat([
-  { from: 0, to: 4 }, { from: 0, to: 7 }, { from: 2, to: 9 },
-  { from: 5, to: 12 }, { from: 3, to: 15 }, { from: 1, to: 6 },
-]);
-
-function RelationshipGraph({ signal }) {
-  const [activeEdge, setActiveEdge] = useState(0);
-  const [pulse, setPulse] = useState([]);
-
-  useEffect(() => {
-    const t = setInterval(() => {
-      setActiveEdge(e => (e + 1) % EDGES.length);
-      setPulse(p => [...p.slice(-4), Math.floor(Math.random() * INIT_NODES.length)]);
-    }, 800);
-    return () => clearInterval(t);
-  }, []);
-
-  const isBull = signal === 'STRONG_BUY' || signal === 'BUY';
-  const pathColor = isBull ? '#00ff88' : '#ff4444';
-
-  return (
-    <svg viewBox="0 0 100 100" className="rel-graph" preserveAspectRatio="xMidYMid meet">
-      {/* dashed median path */}
-      <polyline
-        points={INIT_NODES.slice(0,8).map(n=>`${n.x},${n.y}`).join(' ')}
-        fill="none" stroke={pathColor} strokeWidth="0.4"
-        strokeDasharray="1.5 1" opacity="0.5"
-      />
-      {/* edges */}
-      {EDGES.map((e, i) => {
-        const a = INIT_NODES[e.from], b = INIT_NODES[e.to];
-        return (
-          <line key={i} x1={a.x} y1={a.y} x2={b.x} y2={b.y}
-            stroke={i === activeEdge ? '#00ffff' : '#1a3a3a'}
-            strokeWidth={i === activeEdge ? 0.6 : 0.3} opacity="0.7" />
-        );
-      })}
-      {/* nodes */}
-      {INIT_NODES.map(n => {
-        const isPulse = pulse.includes(n.id);
-        const color = n.type === 'hub' ? '#f5c518'
-          : n.type === 'cluster' ? '#ff6b35'
-          : n.type === 'core' ? '#00ffcc'
-          : '#888';
-        const r = n.type === 'hub' ? 3.5 : n.type === 'cluster' ? 3 : n.type === 'core' ? 2.5 : 1.8;
-        return (
-          <g key={n.id}>
-            {isPulse && <circle cx={n.x} cy={n.y} r={r + 2} fill="none" stroke={color} strokeWidth="0.4" opacity="0.4" />}
-            <circle cx={n.x} cy={n.y} r={r} fill={color} opacity={isPulse ? 1 : 0.75} />
-            <text x={n.x} y={n.y - r - 0.8} textAnchor="middle"
-              fontSize="2.2" fill="#aaa" fontFamily="monospace">{n.label}</text>
-            <text x={n.x} y={n.y + r + 2.5} textAnchor="middle"
-              fontSize="2" fill={color} fontFamily="monospace">+{n.val}</text>
-          </g>
-        );
-      })}
-      {/* legend */}
-      {[['#ff4444','BEAR SIGNAL'],['#00ff88','BULL SIGNAL'],['#aaa','MEDIAN PATH'],
-        ['#f5c518','CATALYST'],['#ff6b35','CLUSTER HUB']].map(([c,l],i)=>(
-        <g key={l}>
-          <circle cx="3" cy={4+i*4} r="1" fill={c}/>
-          <text x="5.5" y={4.8+i*4} fontSize="2.2" fill="#666" fontFamily="monospace">{l}</text>
-        </g>
-      ))}
-    </svg>
-  );
+// ── Num: tabular, flashing ────────────────────────────────────────────────────
+function Num({ v, prefix = '', suffix = '', cls = '' }) {
+  const flash = useFlash(v);
+  const fmt = typeof v === 'number' ? v.toLocaleString('en-US', { maximumFractionDigits: 2 }) : v;
+  return <span className={`num ${flash} ${cls}`}>{prefix}{fmt}{suffix}</span>;
 }
 
 // ── Ticker Tape ───────────────────────────────────────────────────────────────
-const TICKER_ITEMS = [
-  'BTC ▼ DOWN · 1H +$2890','BTC ▲ UP · APR 24 +$294',
-  '★ FILL EXECUTED +7 03¢','BTC ▼ DOWN · APR 24 +$331',
-  'BTC ▲ UP · 1H +$545','MISPRICE · BTC +27¢ EDGE',
-  'SESSION +31 547','8.2 SIGNALS/MIN',
+const TICKS = [
+  { t: 'BTC ▼ DOWN · 1H', v: '+$2890', hi: false },
+  { t: 'BTC ▲ UP · APR 24', v: '+$294', hi: false },
+  { t: '★ FILL EXECUTED +7', v: '03¢', hi: true },
+  { t: 'BTC ▼ DOWN · APR 24', v: '+$331', hi: false },
+  { t: 'BTC ▲ UP · 1H', v: '+$545', hi: false },
+  { t: 'MISPRICE · BTC +27¢', v: 'EDGE', hi: true },
+  { t: 'SESSION +31 547', v: '', hi: false },
+  { t: '8.2 SIGNALS/MIN', v: '', hi: false },
 ];
-
 function TickerTape() {
+  const items = [...TICKS, ...TICKS];
   return (
-    <div className="ticker-wrap">
-      <div className="ticker-track">
-        {[...TICKER_ITEMS,...TICKER_ITEMS].map((t,i)=>(
-          <span key={i} className={t.includes('FILL') ? 'tick-fill' : 'tick-item'}>
-            {t}
+    <div className="ticker">
+      <div className="ticker-inner">
+        {items.map((x, i) => (
+          <span key={i} className={x.hi ? 'tick tick-hi' : 'tick'}>
+            {x.t}{x.v ? <b> {x.v}</b> : ''}
           </span>
         ))}
       </div>
@@ -116,59 +50,160 @@ function TickerTape() {
   );
 }
 
-// ── Mini PnL Curve ────────────────────────────────────────────────────────────
-function PnlCurve({ history }) {
-  if (history.length < 2) return null;
-  const max = Math.max(...history), min = Math.min(...history);
-  const range = max - min || 1;
-  const w = 120, h = 40;
-  const pts = history.map((v,i) =>
-    `${(i/(history.length-1))*w},${h - ((v-min)/range)*h}`
-  ).join(' ');
+// ── SVG Relationship Graph ────────────────────────────────────────────────────
+const NODES = [
+  { id:0,  lbl:'CONSENSUS', x:50, y:18, role:'hub'     },
+  { id:1,  lbl:'CORE',      x:68, y:32, role:'core'    },
+  { id:2,  lbl:'HUB',       x:75, y:50, role:'hub'     },
+  { id:3,  lbl:'MIRO',      x:62, y:65, role:'core'    },
+  { id:4,  lbl:'CLUSTER',   x:42, y:58, role:'cluster' },
+  { id:5,  lbl:'NEXUS',     x:30, y:70, role:'node'    },
+  { id:6,  lbl:'SUPPORT',   x:20, y:52, role:'node'    },
+  { id:7,  lbl:'SUPPLY',    x:25, y:35, role:'node'    },
+  { id:8,  lbl:'LONG',      x:55, y:42, role:'node'    },
+  { id:9,  lbl:'SHORT',     x:38, y:28, role:'node'    },
+  { id:10, lbl:'PATH',      x:15, y:68, role:'node'    },
+  { id:11, lbl:'BREAKOUT',  x:82, y:68, role:'node'    },
+  { id:12, lbl:'ABOVE',     x:70, y:20, role:'node'    },
+  { id:13, lbl:'SAVES',     x:35, y:45, role:'node'    },
+  { id:14, lbl:'FUND',      x:55, y:78, role:'node'    },
+  { id:15, lbl:'CRI_SAP',   x:12, y:40, role:'node'    },
+];
+const EDGES = [
+  [0,1],[0,7],[0,9],[1,2],[1,8],[2,3],[2,11],[3,4],[3,14],
+  [4,5],[4,13],[5,10],[6,7],[6,13],[6,15],[7,9],[8,4],[8,3],[9,13],[11,3],
+];
+const MEDIAN = [0,9,13,4,3,2,11]; // dashed path
+
+const NODE_COLOR = { hub:'#f5c518', core:'#00ffcc', cluster:'#ff6b35', node:'#555' };
+const NODE_R     = { hub:4, core:3.5, cluster:3, node:2 };
+
+function RelGraph({ signal }) {
+  const [flares, setFlares] = useState([]);
+  const [activeEdge, setActiveEdge] = useState(0);
+  // slow drift offsets
+  const [drift, setDrift] = useState(() => NODES.map(() => ({ dx:0, dy:0 })));
+  const tick = useRef(0);
+
+  useEffect(() => {
+    const t = setInterval(() => {
+      tick.current++;
+      // drift
+      setDrift(d => d.map(o => ({
+        dx: o.dx + (Math.random() - 0.5) * 0.3,
+        dy: o.dy + (Math.random() - 0.5) * 0.3,
+      })));
+      // edge pulse
+      setActiveEdge(e => (e + 1) % EDGES.length);
+      // occasional flare
+      if (tick.current % 4 === 0) {
+        const id = Math.floor(Math.random() * NODES.length);
+        setFlares(f => [...f.filter(x => x.id !== id), { id, t: Date.now() }]);
+        setTimeout(() => setFlares(f => f.filter(x => x.id !== id || Date.now() - x.t < 800)), 900);
+      }
+    }, 600);
+    return () => clearInterval(t);
+  }, []);
+
+  const isBull = signal === 'STRONG_BUY' || signal === 'BUY';
+  const pathCol = isBull ? '#00ff88' : '#ff4444';
+
+  const nx = (n, i) => Math.min(Math.max(n.x + drift[i].dx, 5), 95);
+  const ny = (n, i) => Math.min(Math.max(n.y + drift[i].dy, 5), 95);
+
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="pnl-curve">
-      <polyline points={pts} fill="none" stroke="#00ff88" strokeWidth="1.5"/>
-      <circle cx={(history.length-1)/(history.length-1)*w}
-        cy={h-((history[history.length-1]-min)/range)*h} r="2.5" fill="#f5c518"/>
+    <svg viewBox="0 0 100 100" className="rel-graph" preserveAspectRatio="xMidYMid meet">
+      {/* dim grid */}
+      {[20,40,60,80].map(v=>(
+        <g key={v}>
+          <line x1={v} y1={0} x2={v} y2={100} stroke="#111" strokeWidth="0.3"/>
+          <line x1={0} y1={v} x2={100} y2={v} stroke="#111" strokeWidth="0.3"/>
+        </g>
+      ))}
+      {/* edges */}
+      {EDGES.map(([a,b],i) => (
+        <line key={i}
+          x1={nx(NODES[a],a)} y1={ny(NODES[a],a)}
+          x2={nx(NODES[b],b)} y2={ny(NODES[b],b)}
+          stroke={i===activeEdge ? '#00ffcc' : '#1c2c2c'}
+          strokeWidth={i===activeEdge ? 0.7 : 0.35} opacity="0.9"/>
+      ))}
+      {/* median dashed path */}
+      <polyline
+        points={MEDIAN.map(i=>`${nx(NODES[i],i)},${ny(NODES[i],i)}`).join(' ')}
+        fill="none" stroke={pathCol} strokeWidth="0.5"
+        strokeDasharray="2 1.2" opacity="0.7"/>
+      {/* nodes */}
+      {NODES.map((n,i) => {
+        const cx = nx(n,i), cy = ny(n,i);
+        const col = NODE_COLOR[n.role];
+        const r   = NODE_R[n.role];
+        const flt = flares.some(f=>f.id===n.id);
+        return (
+          <g key={n.id}>
+            {flt && <circle cx={cx} cy={cy} r={r+4} fill="none" stroke={col} strokeWidth="0.5" opacity="0.5"/>}
+            {flt && <circle cx={cx} cy={cy} r={r+2} fill="none" stroke={col} strokeWidth="0.3" opacity="0.3"/>}
+            <circle cx={cx} cy={cy} r={r} fill={col} opacity={flt?1:0.8}/>
+            <text x={cx} y={cy-r-1} textAnchor="middle" fontSize="2.2" fill="#777" fontFamily="monospace">{n.lbl}</text>
+          </g>
+        );
+      })}
+      {/* legend */}
+      {[['#ff4444','BEAR SIGNAL'],['#00ff88','BULL SIGNAL'],['#888','MEDIAN PATH'],
+        ['#f5c518','CATALYST'],['#ff6b35','CLUSTER HUB']].map(([c,l],i)=>(
+        <g key={l}>
+          <rect x="1" y={3+i*4.5} width="2" height="2" fill={c}/>
+          <text x="4.5" y={4.8+i*4.5} fontSize="2.2" fill="#555" fontFamily="monospace">{l}</text>
+        </g>
+      ))}
     </svg>
   );
 }
 
-// ── Edge Distribution Bar ─────────────────────────────────────────────────────
-function EdgeBar({ values }) {
-  const max = Math.max(...values, 1);
+// ── PnL Area Chart ────────────────────────────────────────────────────────────
+function PnlArea({ history, width = 120, height = 36 }) {
+  if (history.length < 2) return <svg viewBox={`0 0 ${width} ${height}`} className="pnl-svg"/>;
+  const min = Math.min(...history), max = Math.max(...history);
+  const r = max - min || 1;
+  const pts = history.map((v,i)=>[
+    (i/(history.length-1))*width,
+    height - ((v-min)/r)*(height-2) - 1
+  ]);
+  const poly = pts.map(p=>p.join(',')).join(' ');
+  const area = `${pts[0][0]},${height} ` + poly + ` ${pts[pts.length-1][0]},${height}`;
   return (
-    <div className="edge-bar">
-      {values.map((v,i)=>(
-        <div key={i} className="edge-bar-col"
-          style={{height: `${(v/max)*100}%`,
-            background: v > max*0.7 ? '#f5c518' : v > max*0.4 ? '#00ffcc' : '#1a4a4a'}}/>
-      ))}
-    </div>
+    <svg viewBox={`0 0 ${width} ${height}`} className="pnl-svg" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="pnlGrad" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#00ff88" stopOpacity="0.35"/>
+          <stop offset="100%" stopColor="#00ff88" stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <polygon points={area} fill="url(#pnlGrad)"/>
+      <polyline points={poly} fill="none" stroke="#00ff88" strokeWidth="1.2"/>
+      <circle cx={pts[pts.length-1][0]} cy={pts[pts.length-1][1]} r="2" fill="#f5c518"/>
+    </svg>
   );
 }
 
-// ── Mini Candlestick Chart ────────────────────────────────────────────────────
+// ── Candle chart ──────────────────────────────────────────────────────────────
 function CandleChart({ candles }) {
-  const w = 160, h = 60;
+  const W=140,H=52;
   const prices = candles.flatMap(c=>[c.h,c.l]);
-  const min = Math.min(...prices), max = Math.max(...prices);
-  const range = max - min || 1;
-  const cw = w / candles.length;
+  const mn=Math.min(...prices),mx=Math.max(...prices),rng=mx-mn||1;
+  const cw = W/candles.length;
+  const py = v => H - ((v-mn)/rng)*H;
   return (
-    <svg viewBox={`0 0 ${w} ${h}`} className="candle-chart">
+    <svg viewBox={`0 0 ${W} ${H}`} className="candle-svg" preserveAspectRatio="none">
       {candles.map((c,i)=>{
-        const x = i * cw + cw*0.2;
-        const isUp = c.c >= c.o;
-        const color = isUp ? '#00ff88' : '#ff4444';
-        const top = h - ((Math.max(c.o,c.c)-min)/range)*h;
-        const bot = h - ((Math.min(c.o,c.c)-min)/range)*h;
-        const hi  = h - ((c.h-min)/range)*h;
-        const lo  = h - ((c.l-min)/range)*h;
+        const up = c.c >= c.o;
+        const col = up ? '#00ff88' : '#ff4444';
+        const x = i*cw + cw*0.15;
         return (
           <g key={i}>
-            <line x1={x+cw*0.3} y1={hi} x2={x+cw*0.3} y2={lo} stroke={color} strokeWidth="0.5"/>
-            <rect x={x} y={top} width={cw*0.6} height={Math.max(bot-top,1)} fill={color}/>
+            <line x1={x+cw*0.35} y1={py(c.h)} x2={x+cw*0.35} y2={py(c.l)} stroke={col} strokeWidth="0.4"/>
+            <rect x={x} y={Math.min(py(c.o),py(c.c))} width={cw*0.7}
+              height={Math.max(Math.abs(py(c.c)-py(c.o)),0.6)} fill={col}/>
           </g>
         );
       })}
@@ -176,317 +211,370 @@ function CandleChart({ candles }) {
   );
 }
 
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function genCandles(n=30) {
-  let p = 76;
+// ── Edge Dist bars ────────────────────────────────────────────────────────────
+function EdgeDist({ vals }) {
+  const mx = Math.max(...vals,1);
+  return (
+    <div className="edge-dist">
+      {vals.map((v,i)=>(
+        <div key={i} className="ed-col"
+          style={{height:`${(v/mx)*100}%`,
+            background: v>mx*.7?'#f5c518':v>mx*.4?'#00ffcc':'#1e3a3a'}}/>
+      ))}
+    </div>
+  );
+}
+
+// ── Win blocks ────────────────────────────────────────────────────────────────
+function WinBlocks({ rate }) {
+  const filled = Math.round(rate / 10);
+  return (
+    <div className="win-blocks">
+      {Array.from({length:10},(_,i)=>(
+        <div key={i} className={`wb ${i<filled?'wb-on':''}`}/>
+      ))}
+    </div>
+  );
+}
+
+// ── Candle generator ──────────────────────────────────────────────────────────
+function genCandles(n=35) {
+  let p=76;
   return Array.from({length:n},()=>{
-    const o=p, c=o+(Math.random()-0.49)*1.5;
-    const h=Math.max(o,c)+Math.random()*0.8;
-    const l=Math.min(o,c)-Math.random()*0.8;
-    p=c; return {o,c,h,l};
+    const o=p,c=o+(Math.random()-.49)*1.4;
+    p=c;
+    return {o,c,h:Math.max(o,c)+Math.random()*.7,l:Math.min(o,c)-Math.random()*.7};
   });
 }
 
-// ── Main App ──────────────────────────────────────────────────────────────────
+// ── Confirm modal ─────────────────────────────────────────────────────────────
+function ConfirmModal({ side, size, onConfirm, onCancel }) {
+  return (
+    <div className="modal-overlay">
+      <div className="modal">
+        <div className="modal-title">CONFIRM ORDER</div>
+        <div className="modal-row"><span>Action</span><span className={side==='SHORT'?'negative':'positive'}>{side} BTC</span></div>
+        <div className="modal-row"><span>Size</span><span>${size}</span></div>
+        <div className="modal-row"><span>R:R</span><span>3.4</span></div>
+        <div className="modal-btns">
+          <button className="modal-confirm" onClick={onConfirm}>CONFIRM</button>
+          <button className="modal-cancel"  onClick={onCancel}>CANCEL</button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Toast ─────────────────────────────────────────────────────────────────────
+function Toast({ msg, onDone }) {
+  useEffect(()=>{const t=setTimeout(onDone,2500);return()=>clearTimeout(t);},[]);
+  return <div className="toast">{msg}</div>;
+}
+
+// ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function App() {
-  const [data, setData]       = useState(null);
-  const [connected, setConn]  = useState(false);
-  const [pnlHist, setPnlHist] = useState([0]);
+  const [data,    setData]    = useState(null);
+  const [conn,    setConn]    = useState(false);
+  const [pnlHist, setPnl]     = useState([0]);
   const [candles, setCandles] = useState(genCandles());
-  const [edgeVals, setEdge]   = useState(Array.from({length:18},()=>Math.random()));
-  const [clock, setClock]     = useState(new Date());
-  const [iter, setIter]       = useState(54237);
+  const [edgeV,   setEdgeV]   = useState(()=>Array.from({length:20},()=>Math.random()));
+  const [clock,   setClock]   = useState(new Date());
+  const [modal,   setModal]   = useState(false);
+  const [toast,   setToast]   = useState('');
+  const [filling, setFilling] = useState(false);
 
   useEffect(()=>{
-    const ws = new WebSocket('ws://localhost:8000/ws');
-    ws.onopen  = ()=>setConn(true);
-    ws.onclose = ()=>setConn(false);
-    ws.onmessage = e => {
-      const d = JSON.parse(e.data);
+    const ws=new WebSocket('ws://localhost:8000/ws');
+    ws.onopen=()=>setConn(true);
+    ws.onclose=()=>setConn(false);
+    ws.onmessage=e=>{
+      const d=JSON.parse(e.data);
       setData(d);
-      setPnlHist(h=>[...h.slice(-60), d.live_data.pnl]);
-      setCandles(c=>[...c.slice(1), {
-        o:c[c.length-1].c,
-        c:c[c.length-1].c+(Math.random()-0.49)*1.5,
-        h:0, l:0,
-      }].map(x=>({...x, h:Math.max(x.o,x.c)+Math.random()*0.8,
-                         l:Math.min(x.o,x.c)-Math.random()*0.8})));
-      setEdge(Array.from({length:18},()=>Math.random()));
-      setIter(i=>i+Math.floor(Math.random()*3)+1);
+      setPnl(h=>[...h.slice(-80), d.live_data.pnl||0]);
+      setCandles(c=>{
+        const last=c[c.length-1];
+        const nc={o:last.c,c:last.c+(Math.random()-.49)*1.4};
+        nc.h=Math.max(nc.o,nc.c)+Math.random()*.7;
+        nc.l=Math.min(nc.o,nc.c)-Math.random()*.7;
+        return [...c.slice(1),nc];
+      });
+      setEdgeV(Array.from({length:20},()=>Math.random()));
     };
-    return ()=>ws.close();
+    return()=>ws.close();
   },[]);
 
-  useEffect(()=>{
-    const t=setInterval(()=>setClock(new Date()),1000);
-    return ()=>clearInterval(t);
-  },[]);
+  useEffect(()=>{const t=setInterval(()=>setClock(new Date()),1000);return()=>clearInterval(t);},[]);
 
-  const fmt = n => Math.round(n*100)/100;
-  const fmtTime = d =>
-    d.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
-
-  const signal  = data?.trinity?.signal ?? 'SCANNING';
-  const isBull  = signal==='STRONG_BUY'||signal==='BUY';
-  const isBear  = signal==='STRONG_SELL'||signal==='SELL';
-  const sigColor= isBull?'#00ff88':isBear?'#ff4444':'#f5c518';
-
-  const stepTimes = [131,81,239,62,460,590];
-  const stepLabels=['Scan','Signal','Predict','Compare','Size','Execute'];
-  const stepSubs  =['BTC tick · OS','graph state · 60+ nodes',
-                    'median path · 3k','market odds vs MIRO',
-                    'edge · Kelly · capital','SHORT/LONG · fill'];
-
-  const perf = data?.live_data?.performance ?? {
-    trinity:{wins:45,losses:24,pnl:12340},
-    copy:{wins:32,losses:14,pnl:8960},
-    discovered:{wins:28,losses:11,pnl:10247},
+  const handleShort = () => setModal(true);
+  const handleConfirm = () => {
+    setModal(false);
+    setFilling(true);
+    setTimeout(()=>{
+      setFilling(false);
+      setToast('✓ ORDER FILLED · SHORT BTC · $4.3K');
+    },1200);
   };
 
-  return (
-    <div className="mf-root">
-      <TickerTape />
+  const sig   = data?.trinity?.signal ?? 'SCANNING';
+  const isBull= sig==='STRONG_BUY'||sig==='BUY';
+  const conf  = Math.round((data?.trinity?.confidence??0.94)*100);
+  const wr    = data?.live_data?.win_rate??78;
+  const bal   = data?.live_data?.balance??1000;
+  const cycle = data?.cycle??0;
+  const ksize = data?.kelly_size??29.44;
+  const perf  = data?.live_data?.performance??{trinity:{wins:45,losses:24,pnl:12340},copy:{wins:32,losses:14,pnl:8960},discovered:{wins:28,losses:11,pnl:10247}};
 
-      {/* ── Header ── */}
-      <div className="mf-header">
-        <div className="mf-logo">
-          <span className="mf-logo-main">MiroFish Simulation Engine</span>
-          <span className="mf-logo-sub">BTC DAILY · EDGE DETECTION · LIVE</span>
+  const hhmm = clock.toLocaleTimeString('en-GB',{hour:'2-digit',minute:'2-digit',second:'2-digit'});
+
+  const stepLabels = ['Scan','Signal','Predict','Compare','Size','Execute'];
+  const stepSubs   = ['BTC tick · OS','graph state · 60+ nodes','median path · 3k','market odds vs MIRO','edge · Kelly · capital','SHORT/LONG · fill'];
+  const stepMs     = [131,81,239,62,460,590];
+
+  return (
+    <div className="root">
+      {/* ── Ticker ── */}
+      <TickerTape/>
+
+      {/* ── Top Bar ── */}
+      <header className="topbar">
+        <div className="tb-brand">
+          <span className="tb-tag">POLYMARKET · LIVE · @apexbot</span>
+          <span className="tb-name">MiroFish Simulation Engine</span>
+          <span className="tb-sub">BTC DAILY · EDGE DETECTION · LIVE</span>
         </div>
-        <div className="mf-header-mid">
-          <div className="hstat">
-            <div className="hstat-label">WALLET</div>
-            <div className="hstat-val">0x0fe···1b7</div>
-          </div>
-          <div className="hstat">
-            <div className="hstat-label">ALL-TIME</div>
-            <div className="hstat-val positive">+$31,547</div>
-          </div>
-          <div className="hstat">
-            <div className="hstat-label">WIN RATE</div>
-            <div className="hstat-val positive">{data?.live_data?.win_rate??68}%</div>
-          </div>
+        <div className="tb-stats">
+          {[['WALLET','0x0fe···1b7'],['ALL-TIME','+$369,000'],['BEST','+$166K'],['TRADES','1,262'],['WIN RATE',`${wr}%`],['CYCLE',`#${cycle}`]].map(([l,v])=>(
+            <div className="tb-stat" key={l}>
+              <div className="tb-sl">{l}</div>
+              <div className="tb-sv">{v}</div>
+            </div>
+          ))}
         </div>
-        <div className="mf-clock">{fmtTime(clock)}</div>
-      </div>
+        <div className="tb-clock">{hhmm}</div>
+      </header>
 
       {/* ── Body ── */}
-      <div className="mf-body">
+      <div className="body">
 
-        {/* ── LEFT: Dossier ── */}
-        <div className="mf-left">
-          <div className="dossier-badge">
-            <span className="badge-dot"/>VERIFIED · POLYGON
+        {/* LEFT */}
+        <aside className="left-col">
+          <div className="panel-label">ON-CHAIN DOSSIER</div>
+          <div className="dossier-verified">
+            <span className="dot dot-green"/>VERIFIED · POLYGON
           </div>
           <div className="dossier-handle">@apexbot</div>
           <div className="dossier-addr">0X0FE9···D3A1B7 · ACTIVE 84 DAYS</div>
-          <div className="dossier-pnl-row">
-            <div>
-              <div className="dossier-pnl-label">REALIZED PNL ALL-TIME</div>
-              <div className="dossier-pnl-val">
-                <span className="pnl-big positive">$31</span>
-                <span className="pnl-small positive">547</span>
-              </div>
+          <div className="dossier-row3">
+            <div className="dr3">
+              <Num v={166} prefix="$" suffix="K" cls="positive dr3-big"/>
+              <div className="dr3-lbl">BEST TRADE</div>
             </div>
-          </div>
-          <div className="dossier-stats">
-            <div className="ds-stat"><span className="ds-val positive">+31 547</span><br/><span className="ds-lbl">TODAY</span></div>
-            <div className="ds-stat"><span className="ds-val">84</span><br/><span className="ds-lbl">DAYS</span></div>
-            <div className="ds-stat"><span className="ds-val positive">+2 346/sec</span><br/><span className="ds-lbl">LIVE</span></div>
-          </div>
-
-          <div className="dossier-kpis">
-            <div className="kpi"><span className="kpi-val positive">$31K</span><br/><span className="kpi-lbl">BEST TRADE</span></div>
-            <div className="kpi"><span className="kpi-val">{data?.live_data?.win_rate??68}%</span><br/><span className="kpi-lbl">WIN RATE</span></div>
-            <div className="kpi"><span className="kpi-val">{data?.cycle??0}</span><br/><span className="kpi-lbl">TRADES</span></div>
-          </div>
-
-          <div className="strategy-label">STRATEGY · MIROFISH MISPRICING SCANNER</div>
-          <div className="strategy-desc">
-            Trades daily BTC markets on Polymarket. Runs MiroFish relationship-graph
-            simulation against live order book. Hunts <b>5–40¢ gaps</b> across
-            6-cycle execution pipeline.
-          </div>
-
-          <div className="signal-line" style={{color: sigColor}}>
-            {isBear ? `60¢ → 79¢ → +20¢` : `74¢ → 79¢ → +5¢`}
-            <span className="signal-action" style={{background: sigColor, color:'#000'}}>
-              {isBear ? 'SHORT BTC' : 'LONG BTC'}
-            </span>
-          </div>
-
-          <div className="pnl-curve-label">PNL CURVE · {data?.cycle??0} CYCLES</div>
-          <PnlCurve history={pnlHist}/>
-        </div>
-
-        {/* ── CENTER ── */}
-        <div className="mf-center">
-
-          {/* Cycle Pipeline */}
-          <div className="cycle-header">
-            <div className="cycle-live-badge">LIVE</div>
-            <span className="cycle-title">MiroFish Mispricing Scanner</span>
-            <div className="cycle-meta">
-              Window 3.2s · Avg cycle 1.54s · {iter.toLocaleString()} trades
+            <div className="dr3">
+              <Num v={wr} suffix="%" cls="dr3-big"/>
+              <div className="dr3-lbl">WIN RATE</div>
+            </div>
+            <div className="dr3">
+              <Num v={1262} cls="dr3-big"/>
+              <div className="dr3-lbl">TRADES</div>
             </div>
           </div>
 
-          <div className="pipeline-row">
-            <div className="pipeline-label">Live Cycle</div>
-            <div className="pipeline-badge">CYCLE #{data?.cycle??0}</div>
-            <div className="pipeline-right">
-              Budget 3.2s &nbsp; Elapsed {((data?.cycle??1)*0.05%3).toFixed(2)}s
-            </div>
+          <div className="panel-label" style={{marginTop:8}}>REALIZED PNL ALL-TIME</div>
+          <div className="pnl-alltime">
+            <Num v={385338} prefix="$" cls="positive pnl-big-num"/>
+          </div>
+          <div className="pnl-sub-row">
+            <span className="positive">+$31,547 TODAY</span>
+            <span className="dim">·</span>
+            <span className="positive">+2 346/sec LIVE</span>
           </div>
 
-          <div className="pipeline-steps">
-            {stepLabels.map((label,i)=>(
+          <div className="panel-label" style={{marginTop:8}}>STRATEGY</div>
+          <div className="strategy-txt">
+            MIROFISH MISPRICING SCANNER<br/>
+            <span className="dim">Trades daily BTC markets on Polymarket. Runs MiroFish relationship-graph simulation against live order book. Hunts </span>
+            <span className="positive">5–40¢ gaps</span>
+            <span className="dim"> across 6-cycle execution pipeline.</span>
+          </div>
+
+          <div className="sig-eq">
+            {isBull ? '74¢ → 79¢' : '60¢ → 79¢'}
+            <span className="sig-arrow">=</span>
+            <span className="positive">+{isBull?'5':'19'}¢</span>
+          </div>
+
+          <button
+            className={`trade-btn ${isBull?'trade-btn-long':'trade-btn-short'} ${filling?'trade-btn-filling':''}`}
+            onClick={handleShort}
+            disabled={filling}
+          >
+            {filling ? 'FILLING…' : isBull ? '▲ LONG BTC' : '▼ SHORT BTC'}
+          </button>
+
+          <div className="panel-label" style={{marginTop:8}}>PNL CURVE</div>
+          <PnlArea history={pnlHist} width={160} height={44}/>
+        </aside>
+
+        {/* CENTER */}
+        <main className="center-col">
+          {/* scanner header */}
+          <div className="scanner-hdr">
+            <span className="live-pill">LIVE</span>
+            <span className="scanner-title">MiroFish Mispricing Scanner</span>
+            <span className="scanner-meta">Window 3.2s · Avg cycle 1.54s · {(1200+cycle).toLocaleString()} trades</span>
+          </div>
+
+          {/* cycle row */}
+          <div className="cycle-row">
+            <span className="cycle-lbl">Live Cycle</span>
+            <span className="cycle-badge">CYCLE #{cycle}</span>
+            <span className="cycle-right">Budget 3.2s &nbsp; Elapsed {((cycle*0.05)%3).toFixed(2)}s</span>
+          </div>
+
+          {/* pipeline */}
+          <div className="pipeline">
+            {stepLabels.map((lbl,i)=>(
               <div className="p-step" key={i}>
-                <div className="p-step-num">0{i+1}</div>
-                <div className="p-step-name">{label}</div>
-                <div className="p-step-sub">{stepSubs[i]}</div>
-                <div className="p-step-time">{stepTimes[i]}ms</div>
-                {i===5 && (
-                  <div className="p-last-edge">
+                <div className="p-n">0{i+1}</div>
+                <div className="p-lbl">{lbl}</div>
+                <div className="p-sub">{stepSubs[i]}</div>
+                <div className="p-ms">{stepMs[i]}ms</div>
+                {i===5 &&
+                  <div className="p-edge">
                     LAST EDGE<br/>
-                    <span className="positive" style={{fontSize:'1.4em',fontWeight:'bold'}}>
-                      +{data?.arbitrage?.opportunity ? Math.round((data.arbitrage.spread||0.2)*100) : 20}¢
-                    </span><br/>
-                    <span style={{fontSize:'0.75em',color:'#888'}}>
-                      {isBear?'SHORT BTC':'LONG BTC'} · FILLED
-                    </span>
+                    <span className="positive p-edge-val">+{data?.arbitrage?.opportunity?Math.round((data.arbitrage.spread||.2)*100):20}¢</span><br/>
+                    <span className="dim" style={{fontSize:'0.72em'}}>{isBull?'LONG BTC':'SHORT BTC'} · FILLED</span>
                   </div>
-                )}
+                }
               </div>
             ))}
           </div>
 
-          {/* Graph */}
-          <div className="graph-section">
-            <div className="graph-header">
-              <span className="scanning-dot"/>
-              <span className="graph-title">Relationship Graph Simulation · BTC T+24h</span>
-              <span className="graph-meta">
-                NODES {INIT_NODES.length} &nbsp; EDGES {EDGES.length} &nbsp;
-                PATHS 2,048 &nbsp; ITER {iter.toLocaleString()}
-              </span>
+          {/* graph */}
+          <div className="graph-wrap">
+            <div className="graph-hdr">
+              <span className="scan-pill"/>
+              <span className="gh-title">RELATIONSHIP GRAPH SIMULATION · BTC T+24H</span>
+              <span className="gh-meta">NODES {NODES.length} EDGES {EDGES.length} PATHS 2,048 ITER {(54237+cycle*3).toLocaleString()}</span>
             </div>
-            <RelationshipGraph signal={signal}/>
-            <div className="misprice-bar" style={{borderColor: sigColor}}>
+            <RelGraph signal={sig}/>
+            <div className={`misprice-bar ${isBull?'mpb-bull':'mpb-bear'}`}>
               MISPRICE · BTC &nbsp;
-              <span style={{color:'#aaa'}}>50¢ →</span>&nbsp;
-              <span style={{color: sigColor}}>79¢</span>&nbsp;
-              <span className="edge-badge" style={{background: sigColor, color:'#000'}}>
-                EDGE +20¢
-              </span>
+              <span className="dim">50¢ →</span>&nbsp;
+              <span className="positive">79¢</span>&nbsp;
+              <span className={`edge-tag ${isBull?'et-bull':'et-bear'}`}>EDGE +20¢</span>
             </div>
           </div>
 
-          {/* Bottom stats row */}
-          <div className="bottom-stats">
-            <div className="bstat-panel">
-              <div className="bstat-header">ROLLING WIN RATE · 7D</div>
-              <div className="bstat-big positive">{data?.live_data?.win_rate??68}%</div>
-              <div className="win-blocks">
-                {Array.from({length:10},(_,i)=>(
-                  <div key={i} className={`win-block ${i < Math.round((data?.live_data?.win_rate??68)/10) ? 'win' : 'loss'}`}/>
-                ))}
-              </div>
-              <div className="bstat-sub">
-                {perf.trinity.wins+perf.copy.wins} W &nbsp; {perf.trinity.losses+perf.copy.losses} L
-              </div>
+          {/* bottom 3 */}
+          <div className="b3">
+            <div className="b3-panel">
+              <div className="panel-label">ROLLING WIN RATE · 7D</div>
+              <Num v={wr} suffix="%" cls="b3-big positive"/>
+              <WinBlocks rate={wr}/>
+              <div className="b3-sub">{perf.trinity.wins+perf.copy.wins} W &nbsp; {perf.trinity.losses+perf.copy.losses} L</div>
             </div>
-
-            <div className="bstat-panel">
-              <div className="bstat-header">TODAY PNL · LIVE</div>
-              <div className="bstat-big positive">+${(data?.live_data?.pnl||31547).toLocaleString()}</div>
-              <PnlCurve history={pnlHist}/>
-              <div className="bstat-sub">{data?.cycle??15} trades · peak +${fmt(data?.kelly_size??32)}</div>
+            <div className="b3-panel">
+              <div className="panel-label">TODAY PNL · LIVE</div>
+              <Num v={31547} prefix="+$" cls="b3-big positive"/>
+              <PnlArea history={pnlHist} width={140} height={28}/>
+              <div className="b3-sub">{cycle} trades · peak +${Math.round(ksize)}</div>
             </div>
-
-            <div className="bstat-panel">
-              <div className="bstat-header">EDGE DISTRIBUTION · 24H</div>
-              <div className="bstat-big positive">+{data?.arbitrage?.opportunity ? Math.round((data.arbitrage.spread||0.38)*100) : 38}¢ avg</div>
-              <EdgeBar values={edgeVals}/>
-              <div className="bstat-sub">min +12¢ &nbsp; max +42¢</div>
+            <div className="b3-panel">
+              <div className="panel-label">EDGE DISTRIBUTION · 24H</div>
+              <Num v={38} prefix="+" suffix="¢ avg" cls="b3-big positive"/>
+              <EdgeDist vals={edgeV}/>
+              <div className="b3-sub">min +12¢ &nbsp; max +42¢</div>
             </div>
           </div>
-        </div>
+        </main>
 
-        {/* ── RIGHT ── */}
-        <div className="mf-right">
-          <div className="right-panel trader-panel">
-            <div className="rp-badge">#1 BTC TRADER</div>
-            <div className="rp-sub">BIGGEST MIB APR 24 · 14:23 UTC</div>
-            <div className="big-num">
-              <span className="big-x">×</span>
-              <span className="big-76">76</span>
-              <span className="big-sup">+08</span>
+        {/* RIGHT */}
+        <aside className="right-col">
+          {/* trader */}
+          <div className="r-panel">
+            <div className="rp-tag">#1 BTC TRADER</div>
+            <div className="rp-sub2">BIGGEST MIB APR 24 · 14:23 UTC</div>
+            <div className="big-x-row">
+              <span className="bx-x">×</span>
+              <span className="bx-num">60</span>
+              <span className="bx-sup positive">+08</span>
             </div>
-            <div className="fill-curve-label">FILL CURVE · 1 DAY</div>
-            <div className="trade-details">
-              <div><span className="td-lbl">ENTRY SIZE</span><br/><span className="td-val">$2,184</span></div>
-              <div className="td-arrow">→</div>
-              <div><span className="td-lbl">EXIT · 1 DAY</span><br/><span className="td-val positive">$166,163</span></div>
+            <div className="panel-label">FILL CURVE · 1 DAY</div>
+            <CandleChart candles={candles}/>
+            <div className="trade-kv-row">
+              <div className="tkv"><div className="tkv-l">ENTRY SIZE</div><div className="tkv-v">$2,184</div></div>
+              <div className="tkv-arrow">→</div>
+              <div className="tkv"><div className="tkv-l">EXIT · 1 DAY</div><Num v={166163} prefix="$" cls="tkv-v positive"/></div>
             </div>
-            <div className="trade-row">
-              <span className="td-lbl">MARKET</span>
-              <span className="td-val">BTC ▼ DOWN</span>
-            </div>
-            <div className="trade-row">
-              <span className="td-lbl">ALPHA</span>
-              <span className="td-val positive">+7,506%</span>
-            </div>
-            <div className="trade-row">
-              <span className="td-lbl">TRADES</span>
-              <span className="td-val">1</span>
-            </div>
+            {[['MARKET','BTC ▼ DOWN'],['ALPHA','+7,506%'],['TRADES','1']].map(([l,v])=>(
+              <div className="kv-row" key={l}><span className="kv-l">{l}</span><span className="kv-v">{v}</span></div>
+            ))}
           </div>
 
-          <div className="right-panel signal-panel">
-            <div className="rp-header">Live Mispricing Signal</div>
-            <div className="rp-conf">conf {Math.round((data?.trinity?.confidence??0.94)*100)}% · edge +{data?.arbitrage?.opportunity ? Math.round((data.arbitrage.spread||0.2)*100) : 20}¢</div>
-            <div className="sig-row"><span className="sig-lbl">MARKET</span><span className="sig-val">BTC ▼ DOWN · A...</span></div>
-            <div className="sig-row"><span className="sig-lbl">MARKET ODDS</span><span className="sig-val">68¢</span></div>
-            <div className="sig-row"><span className="sig-lbl">MIROFISH T+24H</span><span className="sig-val positive">¢74 951</span></div>
-            <div className="sig-row"><span className="sig-lbl">IMPLIED ODDS</span><span className="sig-val">79¢</span></div>
-            <div className="short-btn" style={{background: isBull?'#00aa44':'#cc2222'}}>
-              {isBull ? '▲ LONG BTC' : '▼ SHORT BTC'}
-              <span className="short-meta">3.4 R:R · $4.3K size</span>
-            </div>
+          {/* signal */}
+          <div className="r-panel">
+            <div className="panel-label">LIVE MISPRICING SIGNAL</div>
+            <div className="sig-conf">conf <span className="positive">{conf}%</span> · edge +{data?.arbitrage?.opportunity?Math.round((data.arbitrage.spread||.2)*100):20}¢</div>
+            {[['MARKET','BTC ▼ DOWN · A…'],['MARKET ODDS','68¢'],['MIROFISH T+24H','¢74 951'],['IMPLIED ODDS','79¢']].map(([l,v])=>(
+              <div className="kv-row" key={l}><span className="kv-l">{l}</span><span className={`kv-v ${l==='MIROFISH T+24H'?'positive':''}`}>{v}</span></div>
+            ))}
+            <button
+              className={`trade-btn ${isBull?'trade-btn-long':'trade-btn-short'} ${filling?'trade-btn-filling':''}`}
+              onClick={handleShort} disabled={filling}
+            >
+              <span>{filling?'FILLING…':isBull?'▲ LONG BTC':'▼ SHORT BTC'}</span>
+              <span className="tb-meta">3.4 R:R · $4.3K size</span>
+            </button>
           </div>
 
-          <div className="right-panel chart-panel">
-            <div className="rp-header">BTC · 1H · Daily Market</div>
-            <div className="chart-price">${fmt((data?.kelly_size??76) + 76000 - 76000 + 76)}</div>
+          {/* chart */}
+          <div className="r-panel">
+            <div className="panel-label">BTC · 1H · DAILY MARKET</div>
+            <Num v={76381} prefix="$" cls="chart-price"/>
             <CandleChart candles={candles}/>
           </div>
 
-          <div className="right-panel kelly-panel-r">
-            <div className="rp-header">KELLY SIZING</div>
-            <div className="sig-row"><span className="sig-lbl">Position</span><span className="sig-val positive">${fmt(data?.kelly_size??29)}</span></div>
-            <div className="sig-row"><span className="sig-lbl">% Capital</span><span className="sig-val">{fmt((data?.kelly_size??29)/(data?.live_data?.balance??1000)*100)}%</span></div>
-            <div className="sig-row"><span className="sig-lbl">Votes</span><span className="sig-val">{data?.trinity?.buy_votes??5}/10</span></div>
-            <div className="sig-row"><span className="sig-lbl">Signal</span>
-              <span className="sig-val" style={{color: sigColor}}>{signal}</span>
-            </div>
+          {/* kelly */}
+          <div className="r-panel">
+            <div className="panel-label">KELLY SIZING</div>
+            {[
+              ['POSITION',  `$${ksize.toFixed(2)}`],
+              ['% CAPITAL', `${((ksize/bal)*100).toFixed(2)}%`],
+              ['VOTES',      `${data?.trinity?.buy_votes??5} / 10`],
+              ['SIGNAL',    sig],
+            ].map(([l,v])=>(
+              <div className="kv-row" key={l}>
+                <span className="kv-l">{l}</span>
+                <span className={`kv-v ${l==='SIGNAL'?(isBull?'positive':'negative'):''}`}>{v}</span>
+              </div>
+            ))}
           </div>
-        </div>
+        </aside>
       </div>
 
-      {/* ── Footer Ticker ── */}
-      <div className="mf-footer">
-        <span>$420 · BTC ▼ DOWN 24H 38¢</span>
-        <span className="positive">MIRO 79¢</span>
-        <span>TRADES {data?.cycle??0}</span>
-        <span>WIN RATE {data?.live_data?.win_rate??68}%</span>
-        <span>CYCLE #{data?.cycle??0}</span>
-        <span className="positive">MIROFISH {Math.round((data?.trinity?.confidence??0.94)*100)}% CONF</span>
-        <span className="positive">EDGE +38¢ AVG</span>
-        <span>SIGNALS/MIN 8.2</span>
-        {!connected && <span className="negative">● DISCONNECTED</span>}
-        {connected  && <span className="positive">● LIVE</span>}
-      </div>
+      {/* ── Footer ── */}
+      <footer className="foot">
+        {[
+          '$420 · BTC ▼ DOWN 24H 38¢',
+          `MIRO 79¢`,
+          `TRADES ${cycle}`,
+          `WIN RATE ${wr}%`,
+          `CYCLE #${cycle}`,
+          `MIROFISH ${conf}% CONF`,
+          'EDGE +38¢ AVG',
+          'SIGNALS/MIN 8.2',
+          conn ? '● LIVE' : '● DISCONNECTED',
+        ].map((s,i)=>(
+          <span key={i} className={s.includes('DISCONNECTED')?'negative':s==='● LIVE'?'positive':''}>{s}</span>
+        ))}
+      </footer>
+
+      {/* ── Modal ── */}
+      {modal && <ConfirmModal side={isBull?'LONG':'SHORT'} size="4,300" onConfirm={handleConfirm} onCancel={()=>setModal(false)}/>}
+
+      {/* ── Toast ── */}
+      {toast && <Toast msg={toast} onDone={()=>setToast('')}/>}
     </div>
   );
 }
