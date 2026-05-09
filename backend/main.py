@@ -89,7 +89,7 @@ class VolumeModel(ConsensusModel):
     def predict(self, market_data: Dict) -> Tuple[float, float]:
         volumes = np.array(market_data.get('volumes', [1]))[-20:]
         if len(volumes) < 2:
-            return 0.5, 0.4
+            return 0.5, 0.50
 
         avg_vol = np.mean(volumes[:-1])
         current_vol = volumes[-1]
@@ -99,7 +99,7 @@ class VolumeModel(ConsensusModel):
         elif current_vol < avg_vol * 0.5:
             return 0.3, 0.6
         else:
-            return 0.5, 0.4
+            return 0.5, 0.50
 
 
 class OrderBookModel(ConsensusModel):
@@ -113,7 +113,7 @@ class OrderBookModel(ConsensusModel):
         elif imbalance < -0.3:
             return 0.2, 0.7
         else:
-            return 0.5, 0.4
+            return 0.5, 0.50
 
 
 class TrendModel(ConsensusModel):
@@ -149,14 +149,14 @@ class VolatilityModel(ConsensusModel):
 
 class SentimentModel(ConsensusModel):
     def predict(self, market_data: Dict) -> Tuple[float, float]:
-        return np.random.uniform(0.4, 0.6), 0.4
+        return np.random.uniform(0.4, 0.6), 0.50
 
 
 class MeanReversionModel(ConsensusModel):
     def predict(self, market_data: Dict) -> Tuple[float, float]:
         prices = np.array(market_data.get('prices', [0.5]))[-20:]
         if len(prices) < 2:
-            return 0.5, 0.4
+            return 0.5, 0.50
 
         current = prices[-1]
         avg = np.mean(prices[:-1])
@@ -166,14 +166,14 @@ class MeanReversionModel(ConsensusModel):
         elif current < avg * 0.95:
             return 0.8, 0.6
         else:
-            return 0.5, 0.3
+            return 0.5, 0.50
 
 
 class BreakoutModel(ConsensusModel):
     def predict(self, market_data: Dict) -> Tuple[float, float]:
         prices = np.array(market_data.get('prices', [0.5]))[-20:]
         if len(prices) < 2:
-            return 0.5, 0.4
+            return 0.5, 0.50
 
         high = np.max(prices[:-1])
         low = np.min(prices[:-1])
@@ -184,7 +184,7 @@ class BreakoutModel(ConsensusModel):
         elif current < low:
             return 0.2, 0.7
         else:
-            return 0.5, 0.3
+            return 0.5, 0.50
 
 
 class TimeDecayModel(ConsensusModel):
@@ -194,7 +194,7 @@ class TimeDecayModel(ConsensusModel):
         if time_to_expiry < 120:
             return 0.5, 0.7
         else:
-            return 0.5, 0.3
+            return 0.5, 0.50
 
 
 class ArbitrageModel(ConsensusModel):
@@ -204,7 +204,7 @@ class ArbitrageModel(ConsensusModel):
         if spread > 0.02:
             return 0.9, 0.9
         else:
-            return 0.5, 0.3
+            return 0.5, 0.50
 
 
 class MiroFishConsensus:
@@ -400,10 +400,16 @@ class APEXBot:
             }
         }
 
-    def generate_market_data(self) -> Dict:
-        prices = np.random.randn(20).cumsum() + 0.5
+    def generate_market_data(self, price_path: Optional[List[float]] = None) -> Dict:
+        if price_path and len(price_path) >= 2:
+            prices = price_path[-20:]
+        else:
+            # Trending random walk (not pure noise) for detectable signals
+            trend = np.random.choice([-1, 1]) * np.random.uniform(0.002, 0.006)
+            prices = (np.random.randn(20) * 0.008 + trend).cumsum() + 0.5
+            prices = np.clip(prices, 0.05, 0.95).tolist()
         return {
-            'prices': prices.tolist(),
+            'prices': list(prices),
             'volumes': (np.random.rand(20) * 1000).tolist(),
             'bid_volume': float(np.random.rand() * 500),
             'ask_volume': float(np.random.rand() * 500),
@@ -513,28 +519,28 @@ def interpret_signal(trinity: Dict) -> Dict:
     signal     = trinity.get("signal", "HOLD")
 
     # Vote thresholds for BTC direction
-    if votes >= 7 and confidence >= 0.65:
+    if votes >= 7 and confidence >= 0.58:
         # Strong bullish → BUY YES (bet BTC goes up)
-        win_prob = 0.45 + (votes - 7) * 0.05 + (confidence - 0.65) * 0.3
+        win_prob = 0.45 + (votes - 7) * 0.05 + (confidence - 0.58) * 0.3
         return {"side": "YES", "win_prob": min(win_prob, 0.80),
                 "signal_strength": "STRONG", "tradeable": True,
                 "reason": f"{votes}/10 votes BUY · conf {confidence:.0%}"}
 
-    if votes <= 3 and confidence >= 0.65:
+    if votes <= 3 and confidence >= 0.58:
         # Strong bearish → BUY NO (bet BTC goes down)
-        win_prob = 0.45 + (3 - votes) * 0.05 + (confidence - 0.65) * 0.3
+        win_prob = 0.45 + (3 - votes) * 0.05 + (confidence - 0.58) * 0.3
         return {"side": "NO", "win_prob": min(win_prob, 0.80),
                 "signal_strength": "STRONG", "tradeable": True,
                 "reason": f"{votes}/10 votes SELL · conf {confidence:.0%}"}
 
-    if votes >= 6 and confidence >= 0.60:
-        win_prob = 0.42 + (confidence - 0.60) * 0.2
+    if votes >= 6 and confidence >= 0.53:
+        win_prob = 0.42 + (confidence - 0.53) * 0.2
         return {"side": "YES", "win_prob": win_prob,
                 "signal_strength": "MODERATE", "tradeable": True,
                 "reason": f"{votes}/10 votes BUY · conf {confidence:.0%}"}
 
-    if votes <= 4 and confidence >= 0.60:
-        win_prob = 0.42 + (confidence - 0.60) * 0.2
+    if votes <= 4 and confidence >= 0.53:
+        win_prob = 0.42 + (confidence - 0.53) * 0.2
         return {"side": "NO", "win_prob": win_prob,
                 "signal_strength": "MODERATE", "tradeable": True,
                 "reason": f"{votes}/10 votes SELL · conf {confidence:.0%}"}
@@ -885,7 +891,11 @@ async def paper_reset():
 async def start_paper_ticker():
     async def _tick_loop():
         while True:
-            trinity = bot.run_cycle().get("trinity")
+            # Feed live market price path into models so they see real trend data
+            price_path = paper.market._path if paper.market else None
+            market_data = bot.generate_market_data(price_path=price_path)
+            trinity = bot.mirofish.get_consensus(market_data)
+            bot.live_data['cycle'] += 1
             paper.tick(trinity=trinity)
             await asyncio.sleep(1)
     asyncio.create_task(_tick_loop())
