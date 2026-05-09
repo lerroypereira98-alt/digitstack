@@ -271,29 +271,87 @@ function Toast({ msg, onDone }) {
   return <div className="toast">{msg}</div>;
 }
 
+// ── Live YES-price mini chart ─────────────────────────────────────────────────
+function MarketChart({ path, yesPrice, outcome }) {
+  if (!path || path.length < 2) return null;
+  const W = 100, H = 40;
+  const mn = Math.min(...path, 0), mx = Math.max(...path, 1);
+  const rng = mx - mn || 1;
+  const pts = path.map((v, i) =>
+    `${(i / (path.length - 1)) * W},${H - ((v - mn) / rng) * (H - 4) - 2}`
+  ).join(' ');
+  const col = outcome === 'YES' ? '#00e87a' : outcome === 'NO' ? '#e84040' : '#00d4b8';
+  return (
+    <svg viewBox={`0 0 ${W} ${H}`} className="mkt-chart" preserveAspectRatio="none">
+      <defs>
+        <linearGradient id="mg" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor={col} stopOpacity="0.3"/>
+          <stop offset="100%" stopColor={col} stopOpacity="0"/>
+        </linearGradient>
+      </defs>
+      <polygon points={`0,${H} ${pts} ${W},${H}`} fill="url(#mg)"/>
+      <polyline points={pts} fill="none" stroke={col} strokeWidth="1.2"/>
+      {/* current price line */}
+      <line x1="0" y1={H - ((yesPrice - mn) / rng) * (H - 4) - 2}
+            x2={W} y2={H - ((yesPrice - mn) / rng) * (H - 4) - 2}
+            stroke={col} strokeWidth="0.4" strokeDasharray="2 1" opacity="0.5"/>
+    </svg>
+  );
+}
+
+// ── Countdown display ─────────────────────────────────────────────────────────
+function Countdown({ timeLeftMin }) {
+  const total = Math.max(0, timeLeftMin);
+  const m = Math.floor(total);
+  const s = Math.floor((total - m) * 60);
+  return (
+    <span className="mkt-countdown">
+      {String(m).padStart(2,'0')}:{String(s).padStart(2,'0')}
+    </span>
+  );
+}
+
 // ── Paper Trading Panel ───────────────────────────────────────────────────────
 const STRATEGIES = ['MiroFish Consensus','Temporal Arbitrage','Copy Trading','Kelly Only','Manual'];
+const DURATIONS  = [5, 10, 15];
+const SPEEDS     = [1, 10, 100];
 
 function PaperPanel({ paper, onClose }) {
-  const [side,     setSide]     = useState('LONG');
-  const [sizeUsd,  setSizeUsd]  = useState('500');
-  const [strategy, setStrategy] = useState('MiroFish Consensus');
-  const [busy,     setBusy]     = useState(false);
-  const [msg,      setMsg]      = useState('');
+  const [side,      setSide]     = useState('YES');
+  const [sizeUsd,   setSizeUsd]  = useState('500');
+  const [strategy,  setStrategy] = useState('MiroFish Consensus');
+  const [duration,  setDuration] = useState(10);
+  const [speed,     setSpeed]    = useState(10);
+  const [queueCount,setQueue]    = useState(1);
+  const [busy,      setBusy]     = useState(false);
+  const [msg,       setMsg]      = useState('');
 
-  const notify = (m) => { setMsg(m); setTimeout(()=>setMsg(''),2500); };
+  const notify = (m) => { setMsg(m); setTimeout(()=>setMsg(''),3000); };
+
+  const startMarket = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch('http://localhost:8000/api/paper/market/start', {
+        method:'POST', headers:{'Content-Type':'application/json'},
+        body: JSON.stringify({ duration_min: duration, speed, queue_count: queueCount }),
+      });
+      const d = await r.json();
+      if (d.market_id) notify(`✓ MARKET STARTED · ${duration}min @ ${speed}x · "${d.name}"`);
+      else notify('✗ ' + (d.error ?? 'error'));
+    } catch { notify('✗ server error'); }
+    setBusy(false);
+  };
 
   const openTrade = async () => {
     setBusy(true);
     try {
       const r = await fetch('http://localhost:8000/api/paper/open', {
-        method: 'POST',
-        headers: {'Content-Type':'application/json'},
+        method:'POST', headers:{'Content-Type':'application/json'},
         body: JSON.stringify({ side, size_usd: parseFloat(sizeUsd), strategy }),
       });
       const d = await r.json();
-      if (d.error) { notify(`✗ ${d.error}`); }
-      else { notify(`✓ PAPER ${side} @ $${d.entry?.toFixed(0)} · ${strategy}`); }
+      if (d.error) notify(`✗ ${d.error}`);
+      else notify(`✓ ${side} @ ${(d.entry_price*100).toFixed(1)}¢ · ${d.contracts?.toFixed(2)} contracts · ${strategy}`);
     } catch { notify('✗ server error'); }
     setBusy(false);
   };
@@ -302,7 +360,7 @@ function PaperPanel({ paper, onClose }) {
     const r = await fetch(`http://localhost:8000/api/paper/close/${id}`, { method:'POST' });
     const d = await r.json();
     if (d.pnl !== undefined)
-      notify(`✓ CLOSED #${id} · PNL ${d.pnl >= 0 ? '+' : ''}$${d.pnl?.toFixed(2)}`);
+      notify(`✓ CLOSED #${id} · PNL ${d.pnl>=0?'+':''}$${d.pnl?.toFixed(2)}`);
   };
 
   const resetAll = async () => {
@@ -310,70 +368,89 @@ function PaperPanel({ paper, onClose }) {
     notify('✓ PAPER ACCOUNT RESET · $10,000');
   };
 
+  const mkt       = paper?.market;
   const positions = paper?.positions ?? [];
-  const history   = (paper?.history ?? []).slice(-10).reverse();
+  const history   = (paper?.history ?? []).slice(-15).reverse();
   const totalPnl  = paper?.total_pnl ?? 0;
   const wr        = paper?.win_rate ?? 0;
   const balance   = paper?.balance ?? 10000;
+  const queueLen  = paper?.queue_len ?? 0;
+  const hasMarket = mkt && !mkt.resolved;
+  const mktColor  = mkt?.outcome==='YES' ? '#00e87a' : mkt?.outcome==='NO' ? '#e84040' : '#00d4b8';
 
   return (
     <div className="paper-overlay">
       <div className="paper-panel">
-        {/* header */}
+
+        {/* ── header ── */}
         <div className="pp-header">
           <span className="pp-badge">PAPER</span>
-          <span className="pp-title">PAPER TRADING · STRATEGY TESTER</span>
+          <span className="pp-title">PAPER TRADING · TIME-COMPRESSED STRATEGY TESTER</span>
           <button className="pp-close" onClick={onClose}>✕ CLOSE</button>
         </div>
 
-        {/* account summary */}
+        {/* ── account summary bar ── */}
         <div className="pp-summary">
-          <div className="pp-stat">
-            <div className="pp-sl">BALANCE</div>
-            <div className="pp-sv num">${balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
-          </div>
-          <div className="pp-stat">
-            <div className="pp-sl">TOTAL PNL</div>
-            <div className={`pp-sv num ${totalPnl>=0?'positive':'negative'}`}>
-              {totalPnl>=0?'+':''}{totalPnl.toFixed(2)}
+          {[
+            ['BALANCE',   `$${balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}`],
+            ['TOTAL PNL', `${totalPnl>=0?'+':''}$${totalPnl.toFixed(2)}`],
+            ['WIN RATE',  `${wr}%`],
+            ['OPEN',      positions.length],
+            ['CLOSED',    paper?.history?.length ?? 0],
+            ['QUEUED',    queueLen],
+          ].map(([l,v],i)=>(
+            <div className="pp-stat" key={l}>
+              <div className="pp-sl">{l}</div>
+              <div className={`pp-sv num ${l==='TOTAL PNL'?(totalPnl>=0?'positive':'negative'):''}`}>{v}</div>
             </div>
-          </div>
-          <div className="pp-stat">
-            <div className="pp-sl">WIN RATE</div>
-            <div className="pp-sv num">{wr}%</div>
-          </div>
-          <div className="pp-stat">
-            <div className="pp-sl">OPEN</div>
-            <div className="pp-sv num">{positions.length}</div>
-          </div>
-          <div className="pp-stat">
-            <div className="pp-sl">TRADES</div>
-            <div className="pp-sv num">{history.length}</div>
-          </div>
+          ))}
           <button className="pp-reset" onClick={resetAll}>RESET</button>
         </div>
 
         <div className="pp-body">
-          {/* left: order form */}
+
+          {/* ── LEFT: market setup + order form ── */}
           <div className="pp-form-col">
-            <div className="panel-label">NEW PAPER TRADE</div>
 
+            {/* market controls */}
+            <div className="panel-label">MARKET SETUP</div>
+            <div className="pp-row-label">DURATION</div>
+            <div className="pp-seg">
+              {DURATIONS.map(d=>(
+                <button key={d} className={`pp-seg-btn ${duration===d?'pp-seg-on':''}`}
+                  onClick={()=>setDuration(d)}>{d} MIN</button>
+              ))}
+            </div>
+
+            <div className="pp-row-label">SPEED MULTIPLIER</div>
+            <div className="pp-seg">
+              {SPEEDS.map(s=>(
+                <button key={s} className={`pp-seg-btn ${speed===s?'pp-seg-on':''}`}
+                  onClick={()=>setSpeed(s)}>{s}×</button>
+              ))}
+            </div>
+            <div className="pp-speed-hint">
+              At {speed}×: {duration}min market resolves in{' '}
+              <b>{speed===1?`${duration} min`:speed===10?`${duration*6} sec`:`${Math.round(duration*60/speed)} sec`}</b>
+            </div>
+
+            <div className="pp-row-label">AUTO-QUEUE (markets back-to-back)</div>
+            <div className="pp-seg">
+              {[1,3,5,10].map(n=>(
+                <button key={n} className={`pp-seg-btn ${queueCount===n?'pp-seg-on':''}`}
+                  onClick={()=>setQueue(n)}>{n}</button>
+              ))}
+            </div>
+
+            <button className="pp-start-mkt" onClick={startMarket} disabled={busy}>
+              {busy ? 'STARTING…' : hasMarket ? '↺ NEW MARKET' : '▶ START MARKET'}
+            </button>
+
+            {/* order form */}
+            <div className="panel-label" style={{marginTop:8}}>ORDER</div>
             <div className="pp-side-toggle">
-              <button className={`pst-btn ${side==='LONG'?'pst-long':''}`}  onClick={()=>setSide('LONG')}>▲ LONG</button>
-              <button className={`pst-btn ${side==='SHORT'?'pst-short':''}`} onClick={()=>setSide('SHORT')}>▼ SHORT</button>
-            </div>
-
-            <div className="pp-field">
-              <label className="pp-label">SIZE (USD)</label>
-              <input className="pp-input" type="number" value={sizeUsd}
-                onChange={e=>setSizeUsd(e.target.value)} min="10" max={balance} step="50"/>
-            </div>
-
-            <div className="pp-field">
-              <label className="pp-label">STRATEGY</label>
-              <select className="pp-input" value={strategy} onChange={e=>setStrategy(e.target.value)}>
-                {STRATEGIES.map(s=><option key={s} value={s}>{s}</option>)}
-              </select>
+              <button className={`pst-btn ${side==='YES'?'pst-long':''}`}  onClick={()=>setSide('YES')}>▲ BUY YES</button>
+              <button className={`pst-btn ${side==='NO'?'pst-short':''}`}  onClick={()=>setSide('NO')}>▼ BUY NO</button>
             </div>
 
             <div className="pp-quick">
@@ -383,54 +460,118 @@ function PaperPanel({ paper, onClose }) {
                 </button>
               ))}
             </div>
+            <input className="pp-input" type="number" value={sizeUsd}
+              onChange={e=>setSizeUsd(e.target.value)} min="10" step="50"/>
 
-            <button
-              className={`pp-execute ${side==='LONG'?'pp-long':'pp-short'}`}
-              onClick={openTrade} disabled={busy}
-            >
-              {busy ? 'PLACING…' : `PAPER ${side} · $${sizeUsd}`}
+            <div className="pp-field">
+              <label className="pp-label">STRATEGY</label>
+              <select className="pp-input" value={strategy} onChange={e=>setStrategy(e.target.value)}>
+                {STRATEGIES.map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <button className={`pp-execute ${side==='YES'?'pp-long':'pp-short'}`}
+              onClick={openTrade} disabled={busy || !hasMarket}>
+              {!hasMarket ? 'START A MARKET FIRST' : busy ? 'PLACING…' : `PAPER ${side} · $${sizeUsd}`}
             </button>
 
             {msg && <div className={`pp-msg ${msg.startsWith('✓')?'pp-msg-ok':'pp-msg-err'}`}>{msg}</div>}
           </div>
 
-          {/* middle: open positions */}
-          <div className="pp-pos-col">
+          {/* ── CENTER: live market view ── */}
+          <div className="pp-market-col">
+            <div className="panel-label">LIVE MARKET</div>
+            {!mkt
+              ? <div className="pp-empty pp-empty-lg">No market running — click START MARKET</div>
+              : (
+                <>
+                  <div className="mkt-name">{mkt.name}</div>
+                  <div className="mkt-status-row">
+                    {mkt.resolved
+                      ? <span className="mkt-resolved" style={{color: mktColor}}>
+                          RESOLVED · {mkt.outcome} · {(mkt.final_price*100).toFixed(1)}¢
+                        </span>
+                      : <span className="mkt-live-dot">● LIVE</span>
+                    }
+                    <span className="mkt-speed">{mkt.speed}× SPEED</span>
+                    {queueLen > 0 && <span className="mkt-queue">{queueLen} QUEUED</span>}
+                  </div>
+
+                  {/* big price display */}
+                  <div className="mkt-prices">
+                    <div className={`mkt-price-box ${side==='YES'?'mpb-sel':''}`} onClick={()=>setSide('YES')}>
+                      <div className="mkt-price-lbl">YES</div>
+                      <div className="mkt-price-val positive">{(mkt.yes_price*100).toFixed(1)}¢</div>
+                    </div>
+                    <div className={`mkt-price-box ${side==='NO'?'mpb-sel':''}`} onClick={()=>setSide('NO')}>
+                      <div className="mkt-price-lbl">NO</div>
+                      <div className="mkt-price-val negative">{(mkt.no_price*100).toFixed(1)}¢</div>
+                    </div>
+                  </div>
+
+                  {/* progress bar + countdown */}
+                  <div className="mkt-timer-row">
+                    <Countdown timeLeftMin={mkt.time_left_min}/>
+                    <span className="mkt-timer-label">remaining of {mkt.duration_min}min</span>
+                    <span className="mkt-speed-tag">{mkt.speed}×</span>
+                  </div>
+                  <div className="mkt-progress-bar">
+                    <div className="mkt-progress-fill" style={{
+                      width:`${mkt.progress*100}%`,
+                      background: mkt.resolved ? mktColor : '#00d4b8'
+                    }}/>
+                  </div>
+
+                  {/* price chart */}
+                  <MarketChart path={mkt.price_path} yesPrice={mkt.yes_price} outcome={mkt.outcome}/>
+
+                  {/* market stats */}
+                  <div className="mkt-stats-row">
+                    <div className="mkt-stat"><div className="mkt-sl">PROGRESS</div><div className="mkt-sv">{(mkt.progress*100).toFixed(1)}%</div></div>
+                    <div className="mkt-stat"><div className="mkt-sl">DURATION</div><div className="mkt-sv">{mkt.duration_min} MIN</div></div>
+                    <div className="mkt-stat"><div className="mkt-sl">OPEN POS.</div><div className="mkt-sv">{positions.filter(p=>p.market_id===mkt.market_id).length}</div></div>
+                  </div>
+                </>
+              )
+            }
+          </div>
+
+          {/* ── RIGHT: positions + history ── */}
+          <div className="pp-right-col">
             <div className="panel-label">OPEN POSITIONS ({positions.length})</div>
             {positions.length === 0
               ? <div className="pp-empty">No open positions</div>
               : positions.map(p=>(
                 <div className="pp-pos" key={p.id}>
                   <div className="pp-pos-top">
-                    <span className={`pp-pos-side ${p.side==='LONG'?'positive':'negative'}`}>{p.side}</span>
-                    <span className="pp-pos-strat">{p.strategy}</span>
+                    <span className={`pp-pos-side ${p.side==='YES'?'positive':'negative'}`}>{p.side}</span>
+                    <span className="pp-pos-strat">{p.strategy.split(' ')[0]}</span>
                     <span className={`pp-pos-pnl ${p.pnl>=0?'positive':'negative'}`}>
-                      {p.pnl>=0?'+':''}{p.pnl?.toFixed(2)}
+                      {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
                     </span>
                   </div>
                   <div className="pp-pos-bot">
-                    <span>Entry ${p.entry?.toFixed(0)}</span>
-                    <span>Now ${p.current_price?.toFixed(0)??'—'}</span>
-                    <span>Size ${p.size_usd}</span>
-                    <button className="pp-close-pos" onClick={()=>closeTrade(p.id)}>CLOSE</button>
+                    <span>Entry {(p.entry_price*100)?.toFixed(1)}¢</span>
+                    <span>Now {(p.current_price*100)?.toFixed(1)??'—'}¢</span>
+                    <span>{p.contracts?.toFixed(1)} contracts</span>
+                    <button className="pp-close-pos" onClick={()=>closeTrade(p.id)}>EXIT</button>
                   </div>
+                  <div className="pp-pos-mkt">{p.market_name}</div>
                 </div>
               ))
             }
-          </div>
 
-          {/* right: trade history */}
-          <div className="pp-hist-col">
-            <div className="panel-label">TRADE HISTORY</div>
+            <div className="panel-label" style={{marginTop:8}}>TRADE HISTORY ({paper?.history?.length??0})</div>
             {history.length === 0
               ? <div className="pp-empty">No closed trades yet</div>
               : history.map(p=>(
                 <div className="pp-hist-row" key={p.id}>
-                  <span className={`pp-pos-side ${p.side==='LONG'?'positive':'negative'}`}>{p.side}</span>
+                  <span className={`pp-pos-side ${p.side==='YES'?'positive':'negative'}`}>{p.side}</span>
                   <span className="pp-hist-strat">{p.strategy.split(' ')[0]}</span>
-                  <span className="pp-hist-entry">${p.entry?.toFixed(0)} → ${p.exit?.toFixed(0)}</span>
+                  <span className="pp-hist-entry">{(p.entry_price*100)?.toFixed(1)}¢→{(p.exit_price*100)?.toFixed(1)}¢</span>
+                  {p.outcome && <span className={`pp-hist-outcome ${p.outcome==='YES'?'positive':'negative'}`}>{p.outcome}</span>}
                   <span className={`pp-hist-pnl ${p.pnl>=0?'positive':'negative'}`}>
-                    {p.pnl>=0?'+':''}{p.pnl?.toFixed(2)}
+                    {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
                   </span>
                 </div>
               ))

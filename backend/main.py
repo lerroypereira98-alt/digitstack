@@ -458,78 +458,215 @@ bot = APEXBot(starting_capital=1000)
 PAPER_STARTING_BALANCE = 10_000.0
 STRATEGIES = ["MiroFish Consensus", "Temporal Arbitrage", "Copy Trading", "Kelly Only", "Manual"]
 
+MARKET_NAMES = [
+    "Will BTC close above $70k?", "Will BTC be up 1H from now?",
+    "Will ETH outperform BTC today?", "Will BTC hit $80k this week?",
+    "Will crypto market cap exceed $3T?", "Will BTC dominance stay above 50%?",
+    "Will BTC drop more than 2% in 1H?", "Will there be a $1B+ liquidation today?",
+]
+
+
+class SimulatedMarket:
+    """
+    Generates a full YES-price path upfront using Brownian motion,
+    then replays it at `speed`x real-time so a 10-min market resolves
+    in 60 s at 10x or 6 s at 100x.
+    """
+    POINTS = 500  # price path resolution
+
+    def __init__(self, duration_min: int = 10, speed: int = 10):
+        self.market_id    = int(time.time() * 1000)
+        self.name         = np.random.choice(MARKET_NAMES)
+        self.duration_min = duration_min
+        self.speed        = speed                              # 1 | 10 | 100
+        self.real_secs    = duration_min * 60 / speed         # wall-clock seconds
+        self.start_time   = time.time()
+        self.resolved     = False
+        self.outcome: Optional[str]   = None   # YES | NO
+        self.final_price: Optional[float] = None
+        self._path        = self._gen_path()
+
+    def _gen_path(self) -> List[float]:
+        p = 0.45 + np.random.uniform(-0.15, 0.15)
+        path = [p]
+        vol  = 0.012
+        for _ in range(self.POINTS - 1):
+            p = float(np.clip(p + np.random.randn() * vol, 0.02, 0.98))
+            path.append(p)
+        # bias toward a clean resolution
+        path[-1] = float(np.clip(path[-1] + np.random.choice([-1, 1]) * 0.15, 0.02, 0.98))
+        return path
+
+    # ── live state ──────────────────────────────────────────────────────────
+
+    @property
+    def progress(self) -> float:
+        return min((time.time() - self.start_time) / self.real_secs, 1.0)
+
+    @property
+    def yes_price(self) -> float:
+        idx = int(self.progress * (self.POINTS - 1))
+        return round(self._path[idx], 4)
+
+    @property
+    def no_price(self) -> float:
+        return round(1.0 - self.yes_price, 4)
+
+    @property
+    def market_time_remaining(self) -> float:
+        """Remaining time in *market* minutes."""
+        return max(0.0, self.duration_min * (1.0 - self.progress))
+
+    @property
+    def is_done(self) -> bool:
+        return self.progress >= 1.0
+
+    def resolve(self) -> Dict:
+        self.resolved    = True
+        self.final_price = self._path[-1]
+        self.outcome     = "YES" if self.final_price > 0.5 else "NO"
+        return {"outcome": self.outcome, "final_price": self.final_price}
+
+    def snapshot(self) -> Dict:
+        return {
+            "market_id":   self.market_id,
+            "name":        self.name,
+            "yes_price":   self.yes_price,
+            "no_price":    self.no_price,
+            "progress":    round(self.progress, 4),
+            "time_left_min": round(self.market_time_remaining, 2),
+            "duration_min":  self.duration_min,
+            "speed":         self.speed,
+            "resolved":      self.resolved,
+            "outcome":       self.outcome,
+            "final_price":   self.final_price,
+            # send last 60 path points for the chart
+            "price_path": self._path[max(0, int(self.progress * self.POINTS) - 60):
+                                      int(self.progress * self.POINTS) + 1],
+        }
+
+
 class PaperAccount:
     def __init__(self):
-        self.balance = PAPER_STARTING_BALANCE
+        self.balance  = PAPER_STARTING_BALANCE
         self.positions: List[Dict] = []
-        self.history: List[Dict] = []
-        self.trade_id = 0
-        self._mock_price = 76000.0
+        self.history:   List[Dict] = []
+        self.trade_id   = 0
+        self.market: Optional[SimulatedMarket] = None
+        # queue: list of (duration_min, speed) tuples
+        self.queue: List[tuple] = []
 
-    def _next_price(self) -> float:
-        self._mock_price += np.random.randn() * 120
-        return round(self._mock_price, 2)
+    # ── market management ────────────────────────────────────────────────────
+
+    def start_market(self, duration_min: int = 10, speed: int = 10) -> Dict:
+        self.market = SimulatedMarket(duration_min=duration_min, speed=speed)
+        return self.market.snapshot()
+
+    def tick(self):
+        """Called every WS cycle. Auto-resolves market and processes queue."""
+        if self.market and not self.market.resolved and self.market.is_done:
+            self._resolve_current_market()
+        if self.market is None or self.market.resolved:
+            if self.queue:
+                dur, spd = self.queue.pop(0)
+                self.start_market(dur, spd)
+
+    def _resolve_current_market(self):
+        result = self.market.resolve()
+        outcome = result["outcome"]
+        fp      = result["final_price"]
+        # auto-close all positions tied to this market
+        for pos in list(self.positions):
+            if pos.get("market_id") == self.market.market_id:
+                self._settle_position(pos, outcome, fp)
+
+    def _settle_position(self, pos: Dict, outcome: str, final_price: float):
+        won = (pos["side"] == "YES" and outcome == "YES") or \
+              (pos["side"] == "NO"  and outcome == "NO")
+        if won:
+            pnl = round(pos["size_usd"] * (1.0 / pos["entry_price"] - 1.0), 2)
+        else:
+            pnl = -pos["size_usd"]
+        pos.update(status="closed", pnl=pnl, outcome=outcome,
+                   exit_price=final_price,
+                   closed_at=datetime.now().isoformat())
+        self.balance     = round(self.balance + pos["size_usd"] + pnl, 2)
+        self.positions   = [p for p in self.positions if p["id"] != pos["id"]]
+        self.history.append(pos)
+
+    def queue_market(self, duration_min: int, speed: int, count: int = 1):
+        for _ in range(count):
+            self.queue.append((duration_min, speed))
+
+    # ── trading ──────────────────────────────────────────────────────────────
 
     def open_position(self, side: str, size_usd: float, strategy: str) -> Dict:
-        price = self._next_price()
+        if not self.market or self.market.resolved:
+            return {"error": "No active market — start one first"}
+        entry = self.market.yes_price if side == "YES" else self.market.no_price
         self.trade_id += 1
+        contracts = round(size_usd / entry, 4)
         pos = {
-            "id":        self.trade_id,
-            "side":      side.upper(),        # LONG | SHORT
-            "size_usd":  size_usd,
-            "entry":     price,
-            "strategy":  strategy,
-            "opened_at": datetime.now().isoformat(),
-            "status":    "open",
-            "pnl":       0.0,
+            "id":          self.trade_id,
+            "market_id":   self.market.market_id,
+            "market_name": self.market.name,
+            "side":        side.upper(),        # YES | NO
+            "size_usd":    size_usd,
+            "entry_price": entry,
+            "contracts":   contracts,
+            "strategy":    strategy,
+            "opened_at":   datetime.now().isoformat(),
+            "status":      "open",
+            "pnl":         0.0,
         }
         self.positions.append(pos)
-        self.balance -= size_usd
+        self.balance = round(self.balance - size_usd, 2)
         return pos
 
     def close_position(self, trade_id: int) -> Dict:
         pos = next((p for p in self.positions if p["id"] == trade_id), None)
         if not pos:
             return {"error": "position not found"}
-
-        exit_price = self._next_price()
-        diff = (exit_price - pos["entry"]) / pos["entry"]
-        pnl = pos["size_usd"] * diff * (1 if pos["side"] == "LONG" else -1)
-        pnl = round(pnl, 2)
-
-        pos["status"]   = "closed"
-        pos["exit"]     = exit_price
-        pos["pnl"]      = pnl
-        pos["closed_at"]= datetime.now().isoformat()
-
-        self.balance += pos["size_usd"] + pnl
-        self.balance  = round(self.balance, 2)
+        if not self.market:
+            return {"error": "no active market"}
+        exit_price = self.market.yes_price if pos["side"] == "YES" else self.market.no_price
+        pnl = round((exit_price - pos["entry_price"]) * pos["contracts"] *
+                    (1 if pos["side"] == "YES" else -1), 2)
+        pos.update(status="closed", exit_price=exit_price, pnl=pnl,
+                   closed_at=datetime.now().isoformat())
+        self.balance = round(self.balance + pos["size_usd"] + pnl, 2)
         self.positions = [p for p in self.positions if p["id"] != trade_id]
         self.history.append(pos)
         return pos
 
+    # ── mark to market ───────────────────────────────────────────────────────
+
     def mark_to_market(self):
-        """Update unrealised PnL on open positions."""
-        price = self._next_price()
+        if not self.market or self.market.resolved:
+            return
         for p in self.positions:
-            diff = (price - p["entry"]) / p["entry"]
-            p["pnl"] = round(p["size_usd"] * diff * (1 if p["side"] == "LONG" else -1), 2)
-            p["current_price"] = price
+            if p.get("market_id") != self.market.market_id:
+                continue
+            cur = self.market.yes_price if p["side"] == "YES" else self.market.no_price
+            p["current_price"] = cur
+            p["pnl"] = round((cur - p["entry_price"]) * p["contracts"], 2)
+
+    # ── stats ────────────────────────────────────────────────────────────────
 
     @property
     def total_pnl(self) -> float:
-        realised   = sum(p["pnl"] for p in self.history)
-        unrealised = sum(p["pnl"] for p in self.positions)
-        return round(realised + unrealised, 2)
+        return round(sum(p["pnl"] for p in self.history) +
+                     sum(p["pnl"] for p in self.positions), 2)
 
     @property
     def win_rate(self) -> float:
-        closed = [p for p in self.history if p["pnl"] != 0]
+        closed = [p for p in self.history]
         if not closed:
             return 0.0
         return round(len([p for p in closed if p["pnl"] > 0]) / len(closed) * 100, 1)
 
     def snapshot(self) -> Dict:
+        self.tick()
         self.mark_to_market()
         return {
             "balance":    round(self.balance, 2),
@@ -538,6 +675,8 @@ class PaperAccount:
             "positions":  self.positions,
             "history":    self.history[-50:],
             "strategies": STRATEGIES,
+            "market":     self.market.snapshot() if self.market else None,
+            "queue_len":  len(self.queue),
         }
 
     def reset(self):
@@ -548,9 +687,15 @@ paper = PaperAccount()
 
 
 class TradeRequest(BaseModel):
-    side: str          # LONG | SHORT
+    side: str          # YES | NO
     size_usd: float
     strategy: str = "Manual"
+
+
+class MarketRequest(BaseModel):
+    duration_min: int = 10
+    speed: int = 10    # 1 | 10 | 100
+    queue_count: int = 1  # how many markets to auto-queue after this one
 
 
 # ── Paper trading endpoints ───────────────────────────────────────────────────
@@ -559,12 +704,19 @@ class TradeRequest(BaseModel):
 async def paper_snapshot():
     return paper.snapshot()
 
+@app.post("/api/paper/market/start")
+async def paper_market_start(req: MarketRequest):
+    snap = paper.start_market(req.duration_min, req.speed)
+    if req.queue_count > 1:
+        paper.queue_market(req.duration_min, req.speed, req.queue_count - 1)
+    return snap
+
 @app.post("/api/paper/open")
 async def paper_open(req: TradeRequest):
     if req.size_usd <= 0 or req.size_usd > paper.balance:
         return {"error": "invalid size"}
-    if req.side.upper() not in ("LONG", "SHORT"):
-        return {"error": "side must be LONG or SHORT"}
+    if req.side.upper() not in ("YES", "NO"):
+        return {"error": "side must be YES or NO"}
     return paper.open_position(req.side, req.size_usd, req.strategy)
 
 @app.post("/api/paper/close/{trade_id}")
