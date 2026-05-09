@@ -452,52 +452,151 @@ bot = APEXBot(starting_capital=1000)
 
 
 # ============================================================================
-# PAPER TRADING ENGINE
+# PAPER TRADING ENGINE  — BTC 5min & 15min markets only
 # ============================================================================
 
 PAPER_STARTING_BALANCE = 10_000.0
 STRATEGIES = ["MiroFish Consensus", "Temporal Arbitrage", "Copy Trading", "Kelly Only", "Manual"]
 
-MARKET_NAMES = [
-    "Will BTC close above $70k?", "Will BTC be up 1H from now?",
-    "Will ETH outperform BTC today?", "Will BTC hit $80k this week?",
-    "Will crypto market cap exceed $3T?", "Will BTC dominance stay above 50%?",
-    "Will BTC drop more than 2% in 1H?", "Will there be a $1B+ liquidation today?",
-]
+# BTC-only market names, tagged with duration
+BTC_MARKETS = {
+    5:  [
+        "Will BTC be higher in 5 minutes?",
+        "Will BTC stay above current price for 5min?",
+        "Will BTC move up more than 0.1% in 5min?",
+        "Will BTC avoid a 0.2% drop in next 5min?",
+        "Will BTC close green this 5min candle?",
+    ],
+    15: [
+        "Will BTC be higher in 15 minutes?",
+        "Will BTC break above current resistance in 15min?",
+        "Will BTC move up more than 0.3% in 15min?",
+        "Will BTC avoid a 0.5% drop in next 15min?",
+        "Will BTC close green this 15min candle?",
+    ],
+}
+
+# ── Kelly sizing for prediction markets ──────────────────────────────────────
+def kelly_size(
+    win_prob: float,    # model's estimated probability of winning
+    entry_price: float, # cost per contract (e.g. 0.38 for 38¢ YES)
+    balance: float,
+    fractional: float = 0.25,
+    max_pct: float = 0.05,
+) -> float:
+    """
+    Prediction-market Kelly:
+      b  = payout odds = (1 - entry_price) / entry_price
+      f* = (p*b - (1-p)) / b  — standard Kelly fraction
+    Applied at `fractional` of full Kelly, capped at `max_pct` of balance.
+    """
+    if entry_price <= 0 or entry_price >= 1 or win_prob <= 0 or win_prob >= 1:
+        return 0.0
+    b  = (1.0 - entry_price) / entry_price
+    f  = (win_prob * b - (1.0 - win_prob)) / b
+    if f <= 0:
+        return 0.0
+    size = balance * f * fractional
+    return round(min(size, balance * max_pct), 2)
+
+
+# ── Signal interpreter ────────────────────────────────────────────────────────
+def interpret_signal(trinity: Dict) -> Dict:
+    """
+    Maps MiroFish consensus → trade decision with estimated win probability.
+    Only trades when signal is unambiguous and confidence is high enough.
+
+    Returns: { side, win_prob, signal_strength, tradeable }
+    """
+    votes      = trinity.get("buy_votes", 5)
+    confidence = trinity.get("confidence", 0.5)
+    signal     = trinity.get("signal", "HOLD")
+
+    # Vote thresholds for BTC direction
+    if votes >= 7 and confidence >= 0.65:
+        # Strong bullish → BUY YES (bet BTC goes up)
+        win_prob = 0.45 + (votes - 7) * 0.05 + (confidence - 0.65) * 0.3
+        return {"side": "YES", "win_prob": min(win_prob, 0.80),
+                "signal_strength": "STRONG", "tradeable": True,
+                "reason": f"{votes}/10 votes BUY · conf {confidence:.0%}"}
+
+    if votes <= 3 and confidence >= 0.65:
+        # Strong bearish → BUY NO (bet BTC goes down)
+        win_prob = 0.45 + (3 - votes) * 0.05 + (confidence - 0.65) * 0.3
+        return {"side": "NO", "win_prob": min(win_prob, 0.80),
+                "signal_strength": "STRONG", "tradeable": True,
+                "reason": f"{votes}/10 votes SELL · conf {confidence:.0%}"}
+
+    if votes >= 6 and confidence >= 0.60:
+        win_prob = 0.42 + (confidence - 0.60) * 0.2
+        return {"side": "YES", "win_prob": win_prob,
+                "signal_strength": "MODERATE", "tradeable": True,
+                "reason": f"{votes}/10 votes BUY · conf {confidence:.0%}"}
+
+    if votes <= 4 and confidence >= 0.60:
+        win_prob = 0.42 + (confidence - 0.60) * 0.2
+        return {"side": "NO", "win_prob": win_prob,
+                "signal_strength": "MODERATE", "tradeable": True,
+                "reason": f"{votes}/10 votes SELL · conf {confidence:.0%}"}
+
+    return {"side": None, "win_prob": 0.0,
+            "signal_strength": "WEAK", "tradeable": False,
+            "reason": f"HOLD — {votes}/10 votes · conf {confidence:.0%}"}
+
+
+# ── Entry timing gate ─────────────────────────────────────────────────────────
+def entry_allowed(market: "SimulatedMarket", signal_strength: str) -> Dict:
+    """
+    Only enter in the early part of the market where edge has time to play out.
+    Strong signals: enter in first 35% of market.
+    Moderate signals: enter in first 20% of market only.
+    """
+    progress = market.progress
+    if signal_strength == "STRONG"   and progress <= 0.35:
+        return {"allowed": True, "reason": f"Early entry at {progress:.0%} progress"}
+    if signal_strength == "MODERATE" and progress <= 0.20:
+        return {"allowed": True, "reason": f"Early entry at {progress:.0%} progress"}
+    return {"allowed": False,
+            "reason": f"Too late — {progress:.0%} into market (need <{'35' if signal_strength=='STRONG' else '20'}%)"}
 
 
 class SimulatedMarket:
     """
-    Generates a full YES-price path upfront using Brownian motion,
-    then replays it at `speed`x real-time so a 10-min market resolves
-    in 60 s at 10x or 6 s at 100x.
+    BTC 5min or 15min market with realistic mean-reverting price path.
+    Replays at `speed`x so testing is fast.
     """
-    POINTS = 500  # price path resolution
+    POINTS = 600
 
-    def __init__(self, duration_min: int = 10, speed: int = 10):
+    def __init__(self, duration_min: int = 5, speed: int = 10):
+        assert duration_min in (5, 15), "Only 5min and 15min BTC markets supported"
         self.market_id    = int(time.time() * 1000)
-        self.name         = np.random.choice(MARKET_NAMES)
+        self.name         = str(np.random.choice(BTC_MARKETS[duration_min]))
         self.duration_min = duration_min
-        self.speed        = speed                              # 1 | 10 | 100
-        self.real_secs    = duration_min * 60 / speed         # wall-clock seconds
+        self.speed        = speed
+        self.real_secs    = duration_min * 60 / speed
         self.start_time   = time.time()
         self.resolved     = False
-        self.outcome: Optional[str]   = None   # YES | NO
+        self.outcome: Optional[str]    = None
         self.final_price: Optional[float] = None
         self._path        = self._gen_path()
 
     def _gen_path(self) -> List[float]:
-        p = 0.45 + np.random.uniform(-0.15, 0.15)
+        # Start near 50¢ with slight directional bias
+        p   = 0.50 + np.random.uniform(-0.08, 0.08)
+        vol = 0.008 if self.duration_min == 5 else 0.011
+        # Mean-reversion keeps price realistic
+        mu  = 0.50
+        theta = 0.02   # mean-reversion strength
         path = [p]
-        vol  = 0.012
         for _ in range(self.POINTS - 1):
-            p = float(np.clip(p + np.random.randn() * vol, 0.02, 0.98))
+            drift = theta * (mu - p)
+            shock = np.random.randn() * vol
+            p = float(np.clip(p + drift + shock, 0.03, 0.97))
             path.append(p)
-        # bias toward a clean resolution
-        path[-1] = float(np.clip(path[-1] + np.random.choice([-1, 1]) * 0.15, 0.02, 0.98))
+        # Push final price decisively past 0.5 for clean resolution
+        direction = 1 if path[-1] > 0.5 else -1
+        path[-1] = float(np.clip(path[-1] + direction * np.random.uniform(0.08, 0.20), 0.03, 0.97))
         return path
-
-    # ── live state ──────────────────────────────────────────────────────────
 
     @property
     def progress(self) -> float:
@@ -505,8 +604,7 @@ class SimulatedMarket:
 
     @property
     def yes_price(self) -> float:
-        idx = int(self.progress * (self.POINTS - 1))
-        return round(self._path[idx], 4)
+        return round(self._path[int(self.progress * (self.POINTS - 1))], 4)
 
     @property
     def no_price(self) -> float:
@@ -514,7 +612,6 @@ class SimulatedMarket:
 
     @property
     def market_time_remaining(self) -> float:
-        """Remaining time in *market* minutes."""
         return max(0.0, self.duration_min * (1.0 - self.progress))
 
     @property
@@ -528,54 +625,101 @@ class SimulatedMarket:
         return {"outcome": self.outcome, "final_price": self.final_price}
 
     def snapshot(self) -> Dict:
+        idx = int(self.progress * (self.POINTS - 1))
         return {
-            "market_id":   self.market_id,
-            "name":        self.name,
-            "yes_price":   self.yes_price,
-            "no_price":    self.no_price,
-            "progress":    round(self.progress, 4),
-            "time_left_min": round(self.market_time_remaining, 2),
+            "market_id":     self.market_id,
+            "name":          self.name,
             "duration_min":  self.duration_min,
             "speed":         self.speed,
+            "yes_price":     self.yes_price,
+            "no_price":      self.no_price,
+            "progress":      round(self.progress, 4),
+            "time_left_min": round(self.market_time_remaining, 2),
             "resolved":      self.resolved,
             "outcome":       self.outcome,
             "final_price":   self.final_price,
-            # send last 60 path points for the chart
-            "price_path": self._path[max(0, int(self.progress * self.POINTS) - 60):
-                                      int(self.progress * self.POINTS) + 1],
+            "price_path":    self._path[max(0, idx - 80): idx + 1],
         }
 
 
 class PaperAccount:
     def __init__(self):
-        self.balance  = PAPER_STARTING_BALANCE
+        self.balance   = PAPER_STARTING_BALANCE
         self.positions: List[Dict] = []
         self.history:   List[Dict] = []
-        self.trade_id   = 0
+        self.trade_id  = 0
         self.market: Optional[SimulatedMarket] = None
-        # queue: list of (duration_min, speed) tuples
         self.queue: List[tuple] = []
+        # auto-trader state
+        self.auto_trade: bool = False
+        self.auto_log:   List[Dict] = []
+        self._traded_market_ids: set = set()
 
     # ── market management ────────────────────────────────────────────────────
 
-    def start_market(self, duration_min: int = 10, speed: int = 10) -> Dict:
+    def start_market(self, duration_min: int = 5, speed: int = 10) -> Dict:
+        assert duration_min in (5, 15)
         self.market = SimulatedMarket(duration_min=duration_min, speed=speed)
         return self.market.snapshot()
 
-    def tick(self):
-        """Called every WS cycle. Auto-resolves market and processes queue."""
+    def queue_market(self, duration_min: int, speed: int, count: int = 1):
+        assert duration_min in (5, 15)
+        for _ in range(count):
+            self.queue.append((duration_min, speed))
+
+    def tick(self, trinity: Optional[Dict] = None):
+        """Called every WS cycle. Resolves done markets, dequeues, auto-trades."""
         if self.market and not self.market.resolved and self.market.is_done:
             self._resolve_current_market()
+
         if self.market is None or self.market.resolved:
             if self.queue:
                 dur, spd = self.queue.pop(0)
                 self.start_market(dur, spd)
 
+        # Auto-trader: fire once per market if enabled and signal is good
+        if (self.auto_trade and trinity and self.market
+                and not self.market.resolved
+                and self.market.market_id not in self._traded_market_ids):
+            self._auto_trade(trinity)
+
+    def _auto_trade(self, trinity: Dict):
+        sig = interpret_signal(trinity)
+        if not sig["tradeable"]:
+            self._log_auto(f"SKIP — {sig['reason']}")
+            return
+
+        timing = entry_allowed(self.market, sig["signal_strength"])
+        if not timing["allowed"]:
+            self._log_auto(f"SKIP — {timing['reason']}")
+            return
+
+        entry_price = self.market.yes_price if sig["side"] == "YES" else self.market.no_price
+        size = kelly_size(sig["win_prob"], entry_price, self.balance)
+
+        if size < 10:
+            self._log_auto(f"SKIP — Kelly size too small (${size:.2f})")
+            return
+
+        result = self.open_position(sig["side"], size, "MiroFish+Kelly")
+        if "error" in result:
+            self._log_auto(f"ERROR — {result['error']}")
+            return
+
+        self._traded_market_ids.add(self.market.market_id)
+        self._log_auto(
+            f"TRADE — {sig['side']} ${size:.2f} @ {entry_price*100:.1f}¢ "
+            f"| {sig['signal_strength']} signal | {sig['reason']} | {timing['reason']}"
+        )
+
+    def _log_auto(self, msg: str):
+        entry = {"ts": datetime.now().isoformat(), "msg": msg}
+        self.auto_log = [entry] + self.auto_log[:49]
+
     def _resolve_current_market(self):
-        result = self.market.resolve()
+        result  = self.market.resolve()
         outcome = result["outcome"]
         fp      = result["final_price"]
-        # auto-close all positions tied to this market
         for pos in list(self.positions):
             if pos.get("market_id") == self.market.market_id:
                 self._settle_position(pos, outcome, fp)
@@ -583,34 +727,29 @@ class PaperAccount:
     def _settle_position(self, pos: Dict, outcome: str, final_price: float):
         won = (pos["side"] == "YES" and outcome == "YES") or \
               (pos["side"] == "NO"  and outcome == "NO")
-        if won:
-            pnl = round(pos["size_usd"] * (1.0 / pos["entry_price"] - 1.0), 2)
-        else:
-            pnl = -pos["size_usd"]
+        pnl = round(pos["size_usd"] * (1.0 / pos["entry_price"] - 1.0), 2) if won \
+              else -pos["size_usd"]
         pos.update(status="closed", pnl=pnl, outcome=outcome,
-                   exit_price=final_price,
-                   closed_at=datetime.now().isoformat())
-        self.balance     = round(self.balance + pos["size_usd"] + pnl, 2)
-        self.positions   = [p for p in self.positions if p["id"] != pos["id"]]
+                   exit_price=final_price, closed_at=datetime.now().isoformat())
+        self.balance   = round(self.balance + pos["size_usd"] + pnl, 2)
+        self.positions = [p for p in self.positions if p["id"] != pos["id"]]
         self.history.append(pos)
 
-    def queue_market(self, duration_min: int, speed: int, count: int = 1):
-        for _ in range(count):
-            self.queue.append((duration_min, speed))
-
-    # ── trading ──────────────────────────────────────────────────────────────
+    # ── manual trading ────────────────────────────────────────────────────────
 
     def open_position(self, side: str, size_usd: float, strategy: str) -> Dict:
         if not self.market or self.market.resolved:
             return {"error": "No active market — start one first"}
-        entry = self.market.yes_price if side == "YES" else self.market.no_price
-        self.trade_id += 1
+        if size_usd > self.balance:
+            return {"error": f"Insufficient balance (${self.balance:.2f})"}
+        entry     = self.market.yes_price if side == "YES" else self.market.no_price
         contracts = round(size_usd / entry, 4)
+        self.trade_id += 1
         pos = {
             "id":          self.trade_id,
             "market_id":   self.market.market_id,
             "market_name": self.market.name,
-            "side":        side.upper(),        # YES | NO
+            "side":        side.upper(),
             "size_usd":    size_usd,
             "entry_price": entry,
             "contracts":   contracts,
@@ -629,17 +768,16 @@ class PaperAccount:
             return {"error": "position not found"}
         if not self.market:
             return {"error": "no active market"}
-        exit_price = self.market.yes_price if pos["side"] == "YES" else self.market.no_price
-        pnl = round((exit_price - pos["entry_price"]) * pos["contracts"] *
-                    (1 if pos["side"] == "YES" else -1), 2)
-        pos.update(status="closed", exit_price=exit_price, pnl=pnl,
+        exit_p = self.market.yes_price if pos["side"] == "YES" else self.market.no_price
+        pnl    = round((exit_p - pos["entry_price"]) * pos["contracts"], 2)
+        pos.update(status="closed", exit_price=exit_p, pnl=pnl,
                    closed_at=datetime.now().isoformat())
-        self.balance = round(self.balance + pos["size_usd"] + pnl, 2)
+        self.balance   = round(self.balance + pos["size_usd"] + pnl, 2)
         self.positions = [p for p in self.positions if p["id"] != trade_id]
         self.history.append(pos)
         return pos
 
-    # ── mark to market ───────────────────────────────────────────────────────
+    # ── mark to market ────────────────────────────────────────────────────────
 
     def mark_to_market(self):
         if not self.market or self.market.resolved:
@@ -651,7 +789,7 @@ class PaperAccount:
             p["current_price"] = cur
             p["pnl"] = round((cur - p["entry_price"]) * p["contracts"], 2)
 
-    # ── stats ────────────────────────────────────────────────────────────────
+    # ── stats & snapshot ──────────────────────────────────────────────────────
 
     @property
     def total_pnl(self) -> float:
@@ -660,13 +798,12 @@ class PaperAccount:
 
     @property
     def win_rate(self) -> float:
-        closed = [p for p in self.history]
+        closed = self.history
         if not closed:
             return 0.0
         return round(len([p for p in closed if p["pnl"] > 0]) / len(closed) * 100, 1)
 
     def snapshot(self) -> Dict:
-        self.tick()
         self.mark_to_market()
         return {
             "balance":    round(self.balance, 2),
@@ -677,6 +814,8 @@ class PaperAccount:
             "strategies": STRATEGIES,
             "market":     self.market.snapshot() if self.market else None,
             "queue_len":  len(self.queue),
+            "auto_trade": self.auto_trade,
+            "auto_log":   self.auto_log[:10],
         }
 
     def reset(self):
@@ -687,15 +826,19 @@ paper = PaperAccount()
 
 
 class TradeRequest(BaseModel):
-    side: str          # YES | NO
+    side: str
     size_usd: float
     strategy: str = "Manual"
 
 
 class MarketRequest(BaseModel):
-    duration_min: int = 10
-    speed: int = 10    # 1 | 10 | 100
-    queue_count: int = 1  # how many markets to auto-queue after this one
+    duration_min: int = 5    # 5 or 15 only
+    speed: int = 10
+    queue_count: int = 1
+
+
+class AutoTradeRequest(BaseModel):
+    enabled: bool
 
 
 # ── Paper trading endpoints ───────────────────────────────────────────────────
@@ -706,6 +849,8 @@ async def paper_snapshot():
 
 @app.post("/api/paper/market/start")
 async def paper_market_start(req: MarketRequest):
+    if req.duration_min not in (5, 15):
+        return {"error": "Only 5min and 15min BTC markets supported"}
     snap = paper.start_market(req.duration_min, req.speed)
     if req.queue_count > 1:
         paper.queue_market(req.duration_min, req.speed, req.queue_count - 1)
@@ -723,10 +868,27 @@ async def paper_open(req: TradeRequest):
 async def paper_close(trade_id: int):
     return paper.close_position(trade_id)
 
+@app.post("/api/paper/auto")
+async def paper_auto(req: AutoTradeRequest):
+    paper.auto_trade = req.enabled
+    return {"auto_trade": paper.auto_trade}
+
 @app.post("/api/paper/reset")
 async def paper_reset():
     paper.reset()
     return {"status": "reset", "balance": paper.balance}
+
+
+# ── Background paper engine tick (runs independently of WS connections) ───────
+
+@app.on_event("startup")
+async def start_paper_ticker():
+    async def _tick_loop():
+        while True:
+            trinity = bot.run_cycle().get("trinity")
+            paper.tick(trinity=trinity)
+            await asyncio.sleep(1)
+    asyncio.create_task(_tick_loop())
 
 
 # ── Existing endpoints ────────────────────────────────────────────────────────

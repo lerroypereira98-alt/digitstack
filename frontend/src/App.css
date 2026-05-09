@@ -365,30 +365,49 @@ html, body, #root { height:100vh; overflow:hidden; background:var(--bg); color:v
 .mkt-sl        { font-size:8px; color:var(--gray); letter-spacing:.08em; }
 .mkt-sv        { font-size:11px; font-weight:700; }
 
-/* ── Right col (positions + history) ── */
-.pp-right-col { padding:10px; display:flex; flex-direction:column; gap:4px; overflow-y:auto; }
+/* ── Auto-trader button ── */
+.pp-auto-btn {
+  width:100%; padding:7px 10px; font-family:var(--mono); font-size:10px; font-weight:700;
+  border:1px solid var(--b); background:transparent; color:var(--gray); cursor:pointer;
+  display:flex; justify-content:space-between; align-items:center; letter-spacing:.04em;
+}
+.pp-auto-btn:hover { border-color:var(--cyan); color:var(--cyan); }
+.pp-auto-on  { border-color:var(--green)!important; color:var(--green)!important; background:rgba(0,232,122,.06)!important; }
+.pp-auto-sub { font-size:8px; color:var(--gray); }
 
-.pp-pos      { border:1px solid var(--b); margin-bottom:4px; padding:6px 8px; }
-.pp-pos-top  { display:flex; align-items:center; gap:8px; margin-bottom:3px; }
-.pp-pos-side { font-size:11px; font-weight:700; }
-.pp-pos-strat{ font-size:9px; color:var(--gray); flex:1; }
-.pp-pos-pnl  { font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
-.pp-pos-bot  { display:flex; align-items:center; gap:6px; font-size:9px; color:var(--gray); }
-.pp-pos-mkt  { font-size:8px; color:var(--dim); margin-top:2px; white-space:nowrap; overflow:hidden; text-overflow:ellipsis; }
+/* ── Auto activity log ── */
+.pp-auto-log { border:1px solid var(--b); padding:4px 6px; max-height:80px; overflow-y:auto; }
+.pp-log-row  { font-size:8px; padding:2px 0; border-bottom:1px solid var(--b); line-height:1.4; }
+.pp-log-row:last-child { border-bottom:none; }
+.pp-log-trade { color:var(--green); }
+.pp-log-skip  { color:var(--gray); }
+.pp-log-err   { color:var(--red); }
+
+/* ── Right col (trades table) ── */
+.pp-right-col { padding:8px; display:flex; flex-direction:column; gap:4px; overflow-y:auto; }
+.pp-pos-mkt-note { font-size:8px; color:var(--dim); padding:2px 0 6px; border-bottom:1px solid var(--b); }
+.wr-tag { font-size:9px; font-weight:700; }
+
+.trades-table-hdr {
+  display:grid; grid-template-columns:40px 45px 45px 50px 55px 1fr 36px;
+  font-size:8px; color:var(--gray); letter-spacing:.06em;
+  padding:3px 4px; border-bottom:1px solid var(--b); gap:4px;
+}
+.trades-row {
+  display:grid; grid-template-columns:40px 45px 45px 50px 55px 1fr 36px;
+  font-size:9px; padding:4px; border-bottom:1px solid var(--b);
+  gap:4px; align-items:center; font-variant-numeric:tabular-nums;
+}
+.trades-row:hover { background:rgba(255,255,255,.02); }
+.tr-win { border-left:2px solid var(--green); }
+.tr-loss{ border-left:2px solid var(--red); }
+.trades-strat { font-size:8px; color:var(--gray); overflow:hidden; text-overflow:ellipsis; white-space:nowrap; }
+
 .pp-close-pos {
-  margin-left:auto; background:transparent; border:1px solid var(--b);
-  color:var(--gray); font-family:var(--mono); font-size:8px; padding:2px 7px; cursor:pointer;
+  background:transparent; border:1px solid var(--b);
+  color:var(--gray); font-family:var(--mono); font-size:8px; padding:2px 5px; cursor:pointer;
 }
 .pp-close-pos:hover { border-color:var(--red); color:var(--red); }
-
-.pp-hist-row {
-  display:flex; align-items:center; gap:6px;
-  padding:4px 0; border-bottom:1px solid var(--b); font-size:9px;
-}
-.pp-hist-strat   { color:var(--gray); flex:1; }
-.pp-hist-entry   { color:var(--gray); font-size:8px; }
-.pp-hist-outcome { font-weight:700; font-size:9px; }
-.pp-hist-pnl     { font-weight:700; font-variant-numeric:tabular-nums; min-width:50px; text-align:right; }
 
 /* ── Modal ── */
 .modal-overlay {

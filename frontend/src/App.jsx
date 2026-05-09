@@ -320,13 +320,14 @@ function PaperPanel({ paper, onClose }) {
   const [side,      setSide]     = useState('YES');
   const [sizeUsd,   setSizeUsd]  = useState('500');
   const [strategy,  setStrategy] = useState('MiroFish Consensus');
-  const [duration,  setDuration] = useState(10);
+  const [duration,  setDuration] = useState(5);   // BTC 5min or 15min only
   const [speed,     setSpeed]    = useState(10);
   const [queueCount,setQueue]    = useState(1);
   const [busy,      setBusy]     = useState(false);
   const [msg,       setMsg]      = useState('');
+  const [autoOn,    setAutoOn]   = useState(paper?.auto_trade ?? false);
 
-  const notify = (m) => { setMsg(m); setTimeout(()=>setMsg(''),3000); };
+  const notify = (m) => { setMsg(m); setTimeout(()=>setMsg(''),3500); };
 
   const startMarket = async () => {
     setBusy(true);
@@ -336,10 +337,20 @@ function PaperPanel({ paper, onClose }) {
         body: JSON.stringify({ duration_min: duration, speed, queue_count: queueCount }),
       });
       const d = await r.json();
-      if (d.market_id) notify(`✓ MARKET STARTED · ${duration}min @ ${speed}x · "${d.name}"`);
+      if (d.market_id) notify(`✓ BTC ${duration}MIN MARKET STARTED @ ${speed}x · "${d.name}"`);
       else notify('✗ ' + (d.error ?? 'error'));
     } catch { notify('✗ server error'); }
     setBusy(false);
+  };
+
+  const toggleAuto = async () => {
+    const next = !autoOn;
+    setAutoOn(next);
+    await fetch('http://localhost:8000/api/paper/auto', {
+      method:'POST', headers:{'Content-Type':'application/json'},
+      body: JSON.stringify({ enabled: next }),
+    });
+    notify(next ? '✓ AUTO-TRADER ON — MiroFish+Kelly firing trades' : '✓ AUTO-TRADER OFF');
   };
 
   const openTrade = async () => {
@@ -414,9 +425,9 @@ function PaperPanel({ paper, onClose }) {
 
             {/* market controls */}
             <div className="panel-label">MARKET SETUP</div>
-            <div className="pp-row-label">DURATION</div>
+            <div className="pp-row-label">BTC MARKET DURATION</div>
             <div className="pp-seg">
-              {DURATIONS.map(d=>(
+              {[5, 15].map(d=>(
                 <button key={d} className={`pp-seg-btn ${duration===d?'pp-seg-on':''}`}
                   onClick={()=>setDuration(d)}>{d} MIN</button>
               ))}
@@ -443,11 +454,28 @@ function PaperPanel({ paper, onClose }) {
             </div>
 
             <button className="pp-start-mkt" onClick={startMarket} disabled={busy}>
-              {busy ? 'STARTING…' : hasMarket ? '↺ NEW MARKET' : '▶ START MARKET'}
+              {busy ? 'STARTING…' : hasMarket ? '↺ NEW MARKET' : '▶ START BTC MARKET'}
             </button>
 
-            {/* order form */}
-            <div className="panel-label" style={{marginTop:8}}>ORDER</div>
+            {/* auto-trader toggle */}
+            <button className={`pp-auto-btn ${autoOn ? 'pp-auto-on' : ''}`} onClick={toggleAuto}>
+              <span>{autoOn ? '● AUTO-TRADER ACTIVE' : '○ AUTO-TRADER OFF'}</span>
+              <span className="pp-auto-sub">MiroFish + Kelly sizing</span>
+            </button>
+
+            {/* auto log */}
+            {paper?.auto_log?.length > 0 && (
+              <div className="pp-auto-log">
+                {paper.auto_log.slice(0,5).map((l,i)=>(
+                  <div key={i} className={`pp-log-row ${l.msg.startsWith('TRADE')?'pp-log-trade':l.msg.startsWith('ERROR')?'pp-log-err':'pp-log-skip'}`}>
+                    {l.msg}
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* manual order form */}
+            <div className="panel-label" style={{marginTop:6}}>MANUAL ORDER</div>
             <div className="pp-side-toggle">
               <button className={`pst-btn ${side==='YES'?'pst-long':''}`}  onClick={()=>setSide('YES')}>▲ BUY YES</button>
               <button className={`pst-btn ${side==='NO'?'pst-short':''}`}  onClick={()=>setSide('NO')}>▼ BUY NO</button>
@@ -536,45 +564,63 @@ function PaperPanel({ paper, onClose }) {
             }
           </div>
 
-          {/* ── RIGHT: positions + history ── */}
+          {/* ── RIGHT: live trades table ── */}
           <div className="pp-right-col">
+
+            {/* open positions */}
             <div className="panel-label">OPEN POSITIONS ({positions.length})</div>
             {positions.length === 0
-              ? <div className="pp-empty">No open positions</div>
-              : positions.map(p=>(
-                <div className="pp-pos" key={p.id}>
-                  <div className="pp-pos-top">
-                    <span className={`pp-pos-side ${p.side==='YES'?'positive':'negative'}`}>{p.side}</span>
-                    <span className="pp-pos-strat">{p.strategy.split(' ')[0]}</span>
-                    <span className={`pp-pos-pnl ${p.pnl>=0?'positive':'negative'}`}>
-                      {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
-                    </span>
+              ? <div className="pp-empty">No open positions — start a market &amp; trade</div>
+              : <>
+                  <div className="trades-table-hdr">
+                    <span>SIDE</span><span>ENTRY</span><span>NOW</span>
+                    <span>SIZE</span><span>PNL</span><span>STRATEGY</span><span></span>
                   </div>
-                  <div className="pp-pos-bot">
-                    <span>Entry {(p.entry_price*100)?.toFixed(1)}¢</span>
-                    <span>Now {(p.current_price*100)?.toFixed(1)??'—'}¢</span>
-                    <span>{p.contracts?.toFixed(1)} contracts</span>
-                    <button className="pp-close-pos" onClick={()=>closeTrade(p.id)}>EXIT</button>
+                  {positions.map(p=>(
+                    <div className="trades-row" key={p.id}>
+                      <span className={p.side==='YES'?'positive':'negative'}>{p.side}</span>
+                      <span>{(p.entry_price*100).toFixed(1)}¢</span>
+                      <span>{((p.current_price||p.entry_price)*100).toFixed(1)}¢</span>
+                      <span>${p.size_usd}</span>
+                      <span className={p.pnl>=0?'positive':'negative'}>
+                        {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
+                      </span>
+                      <span className="trades-strat">{p.strategy.split(' ')[0]}</span>
+                      <button className="pp-close-pos" onClick={()=>closeTrade(p.id)}>EXIT</button>
+                    </div>
+                  ))}
+                  <div className="pp-pos-mkt-note">
+                    {positions[0]?.market_name}
                   </div>
-                  <div className="pp-pos-mkt">{p.market_name}</div>
-                </div>
-              ))
+                </>
             }
 
-            <div className="panel-label" style={{marginTop:8}}>TRADE HISTORY ({paper?.history?.length??0})</div>
+            {/* all trades history */}
+            <div className="panel-label" style={{marginTop:8}}>
+              ALL TRADES ({paper?.history?.length??0}) &nbsp;
+              <span className={`wr-tag ${wr>=50?'positive':'negative'}`}>{wr}% WIN RATE</span>
+            </div>
             {history.length === 0
               ? <div className="pp-empty">No closed trades yet</div>
-              : history.map(p=>(
-                <div className="pp-hist-row" key={p.id}>
-                  <span className={`pp-pos-side ${p.side==='YES'?'positive':'negative'}`}>{p.side}</span>
-                  <span className="pp-hist-strat">{p.strategy.split(' ')[0]}</span>
-                  <span className="pp-hist-entry">{(p.entry_price*100)?.toFixed(1)}¢→{(p.exit_price*100)?.toFixed(1)}¢</span>
-                  {p.outcome && <span className={`pp-hist-outcome ${p.outcome==='YES'?'positive':'negative'}`}>{p.outcome}</span>}
-                  <span className={`pp-hist-pnl ${p.pnl>=0?'positive':'negative'}`}>
-                    {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
-                  </span>
-                </div>
-              ))
+              : <>
+                  <div className="trades-table-hdr">
+                    <span>SIDE</span><span>ENTRY</span><span>EXIT</span>
+                    <span>SIZE</span><span>OUT</span><span>PNL</span><span>STRATEGY</span>
+                  </div>
+                  {history.map(p=>(
+                    <div className={`trades-row ${p.pnl>=0?'tr-win':'tr-loss'}`} key={p.id}>
+                      <span className={p.side==='YES'?'positive':'negative'}>{p.side}</span>
+                      <span>{(p.entry_price*100).toFixed(1)}¢</span>
+                      <span>{(p.exit_price*100).toFixed(1)}¢</span>
+                      <span>${p.size_usd}</span>
+                      <span className={p.outcome==='YES'?'positive':'negative'}>{p.outcome??'—'}</span>
+                      <span className={p.pnl>=0?'positive':'negative'}>
+                        {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
+                      </span>
+                      <span className="trades-strat">{p.strategy.split(' ')[0]}</span>
+                    </div>
+                  ))}
+                </>
             }
           </div>
         </div>
