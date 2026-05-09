@@ -271,6 +271,177 @@ function Toast({ msg, onDone }) {
   return <div className="toast">{msg}</div>;
 }
 
+// ── Paper Trading Panel ───────────────────────────────────────────────────────
+const STRATEGIES = ['MiroFish Consensus','Temporal Arbitrage','Copy Trading','Kelly Only','Manual'];
+
+function PaperPanel({ paper, onClose }) {
+  const [side,     setSide]     = useState('LONG');
+  const [sizeUsd,  setSizeUsd]  = useState('500');
+  const [strategy, setStrategy] = useState('MiroFish Consensus');
+  const [busy,     setBusy]     = useState(false);
+  const [msg,      setMsg]      = useState('');
+
+  const notify = (m) => { setMsg(m); setTimeout(()=>setMsg(''),2500); };
+
+  const openTrade = async () => {
+    setBusy(true);
+    try {
+      const r = await fetch('http://localhost:8000/api/paper/open', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({ side, size_usd: parseFloat(sizeUsd), strategy }),
+      });
+      const d = await r.json();
+      if (d.error) { notify(`✗ ${d.error}`); }
+      else { notify(`✓ PAPER ${side} @ $${d.entry?.toFixed(0)} · ${strategy}`); }
+    } catch { notify('✗ server error'); }
+    setBusy(false);
+  };
+
+  const closeTrade = async (id) => {
+    const r = await fetch(`http://localhost:8000/api/paper/close/${id}`, { method:'POST' });
+    const d = await r.json();
+    if (d.pnl !== undefined)
+      notify(`✓ CLOSED #${id} · PNL ${d.pnl >= 0 ? '+' : ''}$${d.pnl?.toFixed(2)}`);
+  };
+
+  const resetAll = async () => {
+    await fetch('http://localhost:8000/api/paper/reset', { method:'POST' });
+    notify('✓ PAPER ACCOUNT RESET · $10,000');
+  };
+
+  const positions = paper?.positions ?? [];
+  const history   = (paper?.history ?? []).slice(-10).reverse();
+  const totalPnl  = paper?.total_pnl ?? 0;
+  const wr        = paper?.win_rate ?? 0;
+  const balance   = paper?.balance ?? 10000;
+
+  return (
+    <div className="paper-overlay">
+      <div className="paper-panel">
+        {/* header */}
+        <div className="pp-header">
+          <span className="pp-badge">PAPER</span>
+          <span className="pp-title">PAPER TRADING · STRATEGY TESTER</span>
+          <button className="pp-close" onClick={onClose}>✕ CLOSE</button>
+        </div>
+
+        {/* account summary */}
+        <div className="pp-summary">
+          <div className="pp-stat">
+            <div className="pp-sl">BALANCE</div>
+            <div className="pp-sv num">${balance.toLocaleString('en-US',{minimumFractionDigits:2,maximumFractionDigits:2})}</div>
+          </div>
+          <div className="pp-stat">
+            <div className="pp-sl">TOTAL PNL</div>
+            <div className={`pp-sv num ${totalPnl>=0?'positive':'negative'}`}>
+              {totalPnl>=0?'+':''}{totalPnl.toFixed(2)}
+            </div>
+          </div>
+          <div className="pp-stat">
+            <div className="pp-sl">WIN RATE</div>
+            <div className="pp-sv num">{wr}%</div>
+          </div>
+          <div className="pp-stat">
+            <div className="pp-sl">OPEN</div>
+            <div className="pp-sv num">{positions.length}</div>
+          </div>
+          <div className="pp-stat">
+            <div className="pp-sl">TRADES</div>
+            <div className="pp-sv num">{history.length}</div>
+          </div>
+          <button className="pp-reset" onClick={resetAll}>RESET</button>
+        </div>
+
+        <div className="pp-body">
+          {/* left: order form */}
+          <div className="pp-form-col">
+            <div className="panel-label">NEW PAPER TRADE</div>
+
+            <div className="pp-side-toggle">
+              <button className={`pst-btn ${side==='LONG'?'pst-long':''}`}  onClick={()=>setSide('LONG')}>▲ LONG</button>
+              <button className={`pst-btn ${side==='SHORT'?'pst-short':''}`} onClick={()=>setSide('SHORT')}>▼ SHORT</button>
+            </div>
+
+            <div className="pp-field">
+              <label className="pp-label">SIZE (USD)</label>
+              <input className="pp-input" type="number" value={sizeUsd}
+                onChange={e=>setSizeUsd(e.target.value)} min="10" max={balance} step="50"/>
+            </div>
+
+            <div className="pp-field">
+              <label className="pp-label">STRATEGY</label>
+              <select className="pp-input" value={strategy} onChange={e=>setStrategy(e.target.value)}>
+                {STRATEGIES.map(s=><option key={s} value={s}>{s}</option>)}
+              </select>
+            </div>
+
+            <div className="pp-quick">
+              {[100,250,500,1000].map(v=>(
+                <button key={v} className="pp-quick-btn" onClick={()=>setSizeUsd(String(v))}>
+                  ${v}
+                </button>
+              ))}
+            </div>
+
+            <button
+              className={`pp-execute ${side==='LONG'?'pp-long':'pp-short'}`}
+              onClick={openTrade} disabled={busy}
+            >
+              {busy ? 'PLACING…' : `PAPER ${side} · $${sizeUsd}`}
+            </button>
+
+            {msg && <div className={`pp-msg ${msg.startsWith('✓')?'pp-msg-ok':'pp-msg-err'}`}>{msg}</div>}
+          </div>
+
+          {/* middle: open positions */}
+          <div className="pp-pos-col">
+            <div className="panel-label">OPEN POSITIONS ({positions.length})</div>
+            {positions.length === 0
+              ? <div className="pp-empty">No open positions</div>
+              : positions.map(p=>(
+                <div className="pp-pos" key={p.id}>
+                  <div className="pp-pos-top">
+                    <span className={`pp-pos-side ${p.side==='LONG'?'positive':'negative'}`}>{p.side}</span>
+                    <span className="pp-pos-strat">{p.strategy}</span>
+                    <span className={`pp-pos-pnl ${p.pnl>=0?'positive':'negative'}`}>
+                      {p.pnl>=0?'+':''}{p.pnl?.toFixed(2)}
+                    </span>
+                  </div>
+                  <div className="pp-pos-bot">
+                    <span>Entry ${p.entry?.toFixed(0)}</span>
+                    <span>Now ${p.current_price?.toFixed(0)??'—'}</span>
+                    <span>Size ${p.size_usd}</span>
+                    <button className="pp-close-pos" onClick={()=>closeTrade(p.id)}>CLOSE</button>
+                  </div>
+                </div>
+              ))
+            }
+          </div>
+
+          {/* right: trade history */}
+          <div className="pp-hist-col">
+            <div className="panel-label">TRADE HISTORY</div>
+            {history.length === 0
+              ? <div className="pp-empty">No closed trades yet</div>
+              : history.map(p=>(
+                <div className="pp-hist-row" key={p.id}>
+                  <span className={`pp-pos-side ${p.side==='LONG'?'positive':'negative'}`}>{p.side}</span>
+                  <span className="pp-hist-strat">{p.strategy.split(' ')[0]}</span>
+                  <span className="pp-hist-entry">${p.entry?.toFixed(0)} → ${p.exit?.toFixed(0)}</span>
+                  <span className={`pp-hist-pnl ${p.pnl>=0?'positive':'negative'}`}>
+                    {p.pnl>=0?'+':''}{p.pnl?.toFixed(2)}
+                  </span>
+                </div>
+              ))
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [data,    setData]    = useState(null);
@@ -282,6 +453,7 @@ export default function App() {
   const [modal,   setModal]   = useState(false);
   const [toast,   setToast]   = useState('');
   const [filling, setFilling] = useState(false);
+  const [paperOpen, setPaperOpen] = useState(false);
 
   useEffect(()=>{
     const ws=new WebSocket('ws://localhost:8000/ws');
@@ -350,6 +522,9 @@ export default function App() {
             </div>
           ))}
         </div>
+        <button className={`paper-toggle ${paperOpen?'pt-active':''}`} onClick={()=>setPaperOpen(o=>!o)}>
+          {paperOpen ? '▣ PAPER MODE ON' : '▷ PAPER TRADE'}
+        </button>
         <div className="tb-clock">{hhmm}</div>
       </header>
 
@@ -575,6 +750,9 @@ export default function App() {
 
       {/* ── Toast ── */}
       {toast && <Toast msg={toast} onDone={()=>setToast('')}/>}
+
+      {/* ── Paper Trading Panel ── */}
+      {paperOpen && <PaperPanel paper={data?.paper} onClose={()=>setPaperOpen(false)}/>}
     </div>
   );
 }

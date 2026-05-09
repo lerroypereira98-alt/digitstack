@@ -437,6 +437,7 @@ class APEXBot:
 
 from fastapi import FastAPI, WebSocket
 from fastapi.middleware.cors import CORSMiddleware
+from pydantic import BaseModel
 
 app = FastAPI(title="APEX Trading Bot API")
 
@@ -450,12 +451,141 @@ app.add_middleware(
 bot = APEXBot(starting_capital=1000)
 
 
+# ============================================================================
+# PAPER TRADING ENGINE
+# ============================================================================
+
+PAPER_STARTING_BALANCE = 10_000.0
+STRATEGIES = ["MiroFish Consensus", "Temporal Arbitrage", "Copy Trading", "Kelly Only", "Manual"]
+
+class PaperAccount:
+    def __init__(self):
+        self.balance = PAPER_STARTING_BALANCE
+        self.positions: List[Dict] = []
+        self.history: List[Dict] = []
+        self.trade_id = 0
+        self._mock_price = 76000.0
+
+    def _next_price(self) -> float:
+        self._mock_price += np.random.randn() * 120
+        return round(self._mock_price, 2)
+
+    def open_position(self, side: str, size_usd: float, strategy: str) -> Dict:
+        price = self._next_price()
+        self.trade_id += 1
+        pos = {
+            "id":        self.trade_id,
+            "side":      side.upper(),        # LONG | SHORT
+            "size_usd":  size_usd,
+            "entry":     price,
+            "strategy":  strategy,
+            "opened_at": datetime.now().isoformat(),
+            "status":    "open",
+            "pnl":       0.0,
+        }
+        self.positions.append(pos)
+        self.balance -= size_usd
+        return pos
+
+    def close_position(self, trade_id: int) -> Dict:
+        pos = next((p for p in self.positions if p["id"] == trade_id), None)
+        if not pos:
+            return {"error": "position not found"}
+
+        exit_price = self._next_price()
+        diff = (exit_price - pos["entry"]) / pos["entry"]
+        pnl = pos["size_usd"] * diff * (1 if pos["side"] == "LONG" else -1)
+        pnl = round(pnl, 2)
+
+        pos["status"]   = "closed"
+        pos["exit"]     = exit_price
+        pos["pnl"]      = pnl
+        pos["closed_at"]= datetime.now().isoformat()
+
+        self.balance += pos["size_usd"] + pnl
+        self.balance  = round(self.balance, 2)
+        self.positions = [p for p in self.positions if p["id"] != trade_id]
+        self.history.append(pos)
+        return pos
+
+    def mark_to_market(self):
+        """Update unrealised PnL on open positions."""
+        price = self._next_price()
+        for p in self.positions:
+            diff = (price - p["entry"]) / p["entry"]
+            p["pnl"] = round(p["size_usd"] * diff * (1 if p["side"] == "LONG" else -1), 2)
+            p["current_price"] = price
+
+    @property
+    def total_pnl(self) -> float:
+        realised   = sum(p["pnl"] for p in self.history)
+        unrealised = sum(p["pnl"] for p in self.positions)
+        return round(realised + unrealised, 2)
+
+    @property
+    def win_rate(self) -> float:
+        closed = [p for p in self.history if p["pnl"] != 0]
+        if not closed:
+            return 0.0
+        return round(len([p for p in closed if p["pnl"] > 0]) / len(closed) * 100, 1)
+
+    def snapshot(self) -> Dict:
+        self.mark_to_market()
+        return {
+            "balance":    round(self.balance, 2),
+            "total_pnl":  self.total_pnl,
+            "win_rate":   self.win_rate,
+            "positions":  self.positions,
+            "history":    self.history[-50:],
+            "strategies": STRATEGIES,
+        }
+
+    def reset(self):
+        self.__init__()
+
+
+paper = PaperAccount()
+
+
+class TradeRequest(BaseModel):
+    side: str          # LONG | SHORT
+    size_usd: float
+    strategy: str = "Manual"
+
+
+# ── Paper trading endpoints ───────────────────────────────────────────────────
+
+@app.get("/api/paper/snapshot")
+async def paper_snapshot():
+    return paper.snapshot()
+
+@app.post("/api/paper/open")
+async def paper_open(req: TradeRequest):
+    if req.size_usd <= 0 or req.size_usd > paper.balance:
+        return {"error": "invalid size"}
+    if req.side.upper() not in ("LONG", "SHORT"):
+        return {"error": "side must be LONG or SHORT"}
+    return paper.open_position(req.side, req.size_usd, req.strategy)
+
+@app.post("/api/paper/close/{trade_id}")
+async def paper_close(trade_id: int):
+    return paper.close_position(trade_id)
+
+@app.post("/api/paper/reset")
+async def paper_reset():
+    paper.reset()
+    return {"status": "reset", "balance": paper.balance}
+
+
+# ── Existing endpoints ────────────────────────────────────────────────────────
+
 @app.websocket("/ws")
 async def websocket_endpoint(websocket: WebSocket):
     await websocket.accept()
     try:
         while True:
             response = bot.run_cycle()
+            response["paper"] = paper.snapshot()
             await websocket.send_text(json.dumps(response, default=str))
             await asyncio.sleep(1)
     except Exception as e:

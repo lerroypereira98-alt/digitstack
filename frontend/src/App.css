@@ -218,6 +218,121 @@ html, body, #root { height:100vh; overflow:hidden; background:var(--bg); color:v
   letter-spacing:.04em;
 }
 
+/* ── Paper Trading Toggle Button ── */
+.paper-toggle {
+  margin-left:12px; padding:4px 12px; font-family:var(--mono);
+  font-size:10px; font-weight:700; letter-spacing:.08em; cursor:pointer;
+  border:1px solid var(--amber); background:transparent; color:var(--amber);
+  border-radius:0; transition:background .15s,color .15s;
+}
+.paper-toggle:hover  { background:var(--amber); color:#000; }
+.pt-active           { background:var(--amber); color:#000; }
+
+/* ── Paper Panel Overlay ── */
+.paper-overlay {
+  position:fixed; inset:0; background:rgba(0,0,0,.75);
+  display:flex; align-items:flex-end; z-index:150;
+  animation:slideup .2s ease-out;
+}
+@keyframes slideup { from{transform:translateY(40px);opacity:0} to{transform:translateY(0);opacity:1} }
+
+.paper-panel {
+  width:100%; background:var(--bg1); border-top:2px solid var(--amber);
+  max-height:70vh; display:flex; flex-direction:column;
+}
+
+.pp-header {
+  display:flex; align-items:center; gap:10px;
+  padding:8px 14px; border-bottom:1px solid var(--b); background:var(--bg2); flex-shrink:0;
+}
+.pp-badge  { background:var(--amber); color:#000; font-size:9px; font-weight:700; padding:2px 7px; letter-spacing:.08em; }
+.pp-title  { font-size:12px; font-weight:700; color:var(--amber); letter-spacing:.06em; }
+.pp-close  { margin-left:auto; background:transparent; border:1px solid var(--b); color:var(--gray); font-family:var(--mono); font-size:10px; padding:3px 10px; cursor:pointer; }
+.pp-close:hover { border-color:var(--red); color:var(--red); }
+
+.pp-summary {
+  display:flex; align-items:center; gap:0;
+  padding:6px 14px; border-bottom:1px solid var(--b); background:var(--bg2); flex-shrink:0;
+}
+.pp-stat   { border-right:1px solid var(--b); padding:0 14px; }
+.pp-sl     { font-size:8px; color:var(--gray); letter-spacing:.1em; }
+.pp-sv     { font-size:14px; font-weight:700; font-variant-numeric:tabular-nums; }
+.pp-reset  {
+  margin-left:auto; background:transparent; border:1px solid var(--b);
+  color:var(--gray); font-family:var(--mono); font-size:9px; padding:4px 12px; cursor:pointer;
+}
+.pp-reset:hover { border-color:var(--red); color:var(--red); }
+
+.pp-body {
+  display:grid; grid-template-columns:220px 1fr 1fr;
+  overflow:hidden; flex:1;
+}
+
+/* ── Form col ── */
+.pp-form-col { border-right:1px solid var(--b); padding:10px; display:flex; flex-direction:column; gap:6px; overflow-y:auto; }
+
+.pp-side-toggle { display:flex; gap:0; }
+.pst-btn {
+  flex:1; padding:6px; font-family:var(--mono); font-size:11px; font-weight:700;
+  border:1px solid var(--b); background:transparent; color:var(--gray); cursor:pointer;
+}
+.pst-btn:first-child { border-right:none; }
+.pst-long  { background:var(--green)!important; color:#000!important; border-color:var(--green)!important; }
+.pst-short { background:var(--red)!important;   color:#000!important; border-color:var(--red)!important;   }
+
+.pp-field  { display:flex; flex-direction:column; gap:3px; }
+.pp-label  { font-size:8px; color:var(--gray); letter-spacing:.1em; }
+.pp-input  {
+  background:var(--bg); border:1px solid var(--b); color:var(--text);
+  font-family:var(--mono); font-size:11px; padding:5px 8px; width:100%;
+}
+.pp-input:focus { outline:none; border-color:var(--cyan); }
+
+.pp-quick     { display:flex; gap:4px; }
+.pp-quick-btn {
+  flex:1; padding:4px; background:transparent; border:1px solid var(--b);
+  color:var(--gray); font-family:var(--mono); font-size:9px; cursor:pointer;
+}
+.pp-quick-btn:hover { border-color:var(--amber); color:var(--amber); }
+
+.pp-execute {
+  width:100%; padding:8px; font-family:var(--mono); font-size:11px; font-weight:700;
+  border:none; cursor:pointer; letter-spacing:.06em; margin-top:2px;
+}
+.pp-long  { background:var(--green); color:#000; }
+.pp-short { background:var(--red);   color:#000; }
+.pp-execute:disabled { opacity:.5; cursor:default; }
+
+.pp-msg     { font-size:10px; padding:5px 8px; border-left:3px solid; }
+.pp-msg-ok  { border-color:var(--green); color:var(--green); }
+.pp-msg-err { border-color:var(--red);   color:var(--red); }
+
+/* ── Positions col ── */
+.pp-pos-col  { border-right:1px solid var(--b); padding:10px; overflow-y:auto; }
+.pp-empty    { font-size:10px; color:var(--gray); padding:10px 0; }
+
+.pp-pos      { border:1px solid var(--b); margin-bottom:5px; padding:6px 8px; }
+.pp-pos-top  { display:flex; align-items:center; gap:8px; margin-bottom:4px; }
+.pp-pos-side { font-size:11px; font-weight:700; }
+.pp-pos-strat{ font-size:9px; color:var(--gray); flex:1; }
+.pp-pos-pnl  { font-size:12px; font-weight:700; font-variant-numeric:tabular-nums; }
+.pp-pos-bot  { display:flex; align-items:center; gap:8px; font-size:9px; color:var(--gray); }
+.pp-close-pos {
+  margin-left:auto; background:transparent; border:1px solid var(--b);
+  color:var(--gray); font-family:var(--mono); font-size:8px; padding:2px 7px; cursor:pointer;
+}
+.pp-close-pos:hover { border-color:var(--red); color:var(--red); }
+
+/* ── History col ── */
+.pp-hist-col { padding:10px; overflow-y:auto; }
+.pp-hist-row {
+  display:flex; align-items:center; gap:8px;
+  padding:5px 0; border-bottom:1px solid var(--b); font-size:9px;
+}
+.pp-hist-strat { color:var(--gray); flex:1; }
+.pp-hist-entry { color:var(--gray); }
+.pp-hist-pnl   { font-weight:700; font-variant-numeric:tabular-nums; min-width:55px; text-align:right; }
+
 /* ── Modal ── */
 .modal-overlay {
   position:fixed; inset:0; background:rgba(0,0,0,.8);
