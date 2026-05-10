@@ -441,9 +441,16 @@ class APEXBot:
 # PART 7: FASTAPI SERVER WITH WEBSOCKET
 # ============================================================================
 
-from fastapi import FastAPI, WebSocket
+from fastapi import FastAPI, WebSocket, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
+
+try:
+    from kalshi_client import kalshi as _kalshi
+    KALSHI_AVAILABLE = True
+except Exception as _e:
+    KALSHI_AVAILABLE = False
+    print(f"[main] Kalshi client not available: {_e}")
 
 app = FastAPI(title="APEX Trading Bot API")
 
@@ -1355,6 +1362,147 @@ async def run_backtest(num_trades: int = 100, duration_min: int = 5):
         "worst_trade": round(min(pnls), 2),
         "trades": results[:100]  # return first 100 for inspection
     }
+
+
+# ============================================================================
+# KALSHI LIVE ENDPOINTS
+# ============================================================================
+
+def _require_kalshi():
+    if not KALSHI_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Kalshi client unavailable — check KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env")
+
+
+@app.get("/api/kalshi/health")
+async def kalshi_health():
+    """Check if Kalshi credentials are loaded."""
+    return {
+        "kalshi_available": KALSHI_AVAILABLE,
+        "has_api_key": bool(_kalshi.api_key) if KALSHI_AVAILABLE else False,
+        "has_private_key": bool(_kalshi._private_key) if KALSHI_AVAILABLE else False,
+    }
+
+
+@app.get("/api/kalshi/balance")
+async def kalshi_balance():
+    """Get live Kalshi account balance."""
+    _require_kalshi()
+    try:
+        data = _kalshi.get_balance()
+        balance_cents = data.get("balance", 0)
+        return {
+            "balance_cents": balance_cents,
+            "balance_dollars": round(balance_cents / 100, 2),
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/kalshi/positions")
+async def kalshi_positions():
+    """Get all open Kalshi positions."""
+    _require_kalshi()
+    try:
+        return {"positions": _kalshi.get_positions()}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/kalshi/markets")
+async def kalshi_markets():
+    """Get all open BTC 15-min markets from Kalshi."""
+    _require_kalshi()
+    try:
+        markets = _kalshi.get_btc_markets(status="open")
+        return {"markets": markets, "count": len(markets)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/kalshi/signals")
+async def kalshi_signals():
+    """
+    Scan live Kalshi BTC markets and return TierA/B/C entry signals.
+    Only returns markets at 73%+ progress with price ≥0.74 or ≤0.26.
+    """
+    _require_kalshi()
+    try:
+        signals = _kalshi.scan_btc_15min_signals()
+        return {
+            "signals": signals,
+            "count": len(signals),
+            "best": signals[0] if signals else None,
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/kalshi/market/{ticker}")
+async def kalshi_market_detail(ticker: str):
+    """Get details + orderbook for a specific market."""
+    _require_kalshi()
+    try:
+        market = _kalshi.get_market(ticker)
+        orderbook = _kalshi.get_orderbook(ticker)
+        return {"market": market, "orderbook": orderbook}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+class KalshiOrderRequest(BaseModel):
+    ticker: str
+    side: str          # "yes" or "no"
+    count: int         # number of contracts
+    price_cents: int   # 1-99
+    order_type: str = "limit"
+
+
+@app.post("/api/kalshi/order")
+async def kalshi_place_order(req: KalshiOrderRequest):
+    """
+    Place a live order on Kalshi.
+    WARNING: This places a REAL order with REAL money.
+    """
+    _require_kalshi()
+    if req.side.lower() not in ("yes", "no"):
+        raise HTTPException(status_code=400, detail="side must be 'yes' or 'no'")
+    if not (1 <= req.price_cents <= 99):
+        raise HTTPException(status_code=400, detail="price_cents must be 1-99")
+    if req.count < 1:
+        raise HTTPException(status_code=400, detail="count must be ≥ 1")
+    try:
+        result = _kalshi.place_order(
+            ticker=req.ticker,
+            side=req.side,
+            count=req.count,
+            price_cents=req.price_cents,
+            order_type=req.order_type,
+        )
+        return {"status": "submitted", "order": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.delete("/api/kalshi/order/{order_id}")
+async def kalshi_cancel_order(order_id: str):
+    """Cancel an open Kalshi order."""
+    _require_kalshi()
+    try:
+        result = _kalshi.cancel_order(order_id)
+        return {"status": "cancelled", "result": result}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/kalshi/fills")
+async def kalshi_fills(limit: int = 20):
+    """Get recent trade fills."""
+    _require_kalshi()
+    try:
+        fills = _kalshi.get_fills(limit=limit)
+        return {"fills": fills, "count": len(fills)}
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 # ============================================================================
