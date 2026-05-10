@@ -654,6 +654,140 @@ function PaperPanel({ onClose }) {
   );
 }
 
+// ── Live Kalshi Panel ─────────────────────────────────────────────────────────
+function KalshiLivePanel({ onClose }) {
+  const [data, setData] = useState(null);
+  const [newTrade, setNewTrade] = useState(false);
+  const prevCount = useRef(0);
+
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch('http://localhost:8000/api/kalshi/dashboard');
+        if (r.ok) {
+          const d = await r.json();
+          setData(d);
+          const count = d.trade_history?.length ?? 0;
+          if (count > prevCount.current) {
+            setNewTrade(true);
+            setTimeout(() => setNewTrade(false), 800);
+            prevCount.current = count;
+          }
+        }
+      } catch {}
+    };
+    poll();
+    const id = setInterval(poll, 5000);
+    return () => clearInterval(id);
+  }, []);
+
+  if (!data) return null;
+
+  const bal      = data.balance_usd ?? 0;
+  const fills    = data.trade_history ?? [];
+  const openPos  = data.open_positions ?? [];
+  const slEvents = data.stop_loss_events ?? [];
+  const stats    = data.stats ?? {};
+
+  return (
+    <div className="pp-overlay" onClick={onClose}>
+      <div className="pp-panel" style={{maxWidth:760}} onClick={e=>e.stopPropagation()}>
+
+        {/* header */}
+        <div className="pp-header">
+          <span className="pp-badge" style={{background:'#00ff88',color:'#000'}}>LIVE</span>
+          <span className="pp-title">KALSHI LIVE · BTC 15-MIN MARKETS</span>
+          <button className="pp-close" onClick={onClose}>✕ CLOSE</button>
+        </div>
+
+        {/* summary bar */}
+        <div className="pp-summary">
+          {[
+            ['BALANCE',    `$${bal.toFixed(2)}`],
+            ['TRADES',     stats.total_trades ?? 0],
+            ['OPEN',       stats.open_count ?? 0],
+            ['STOP LOSSES',stats.stop_losses ?? 0],
+            ['TAKE PROFITS',stats.take_profits ?? 0],
+            ['MONITOR',    data.monitor_active ? 'ON' : 'OFF'],
+          ].map(([l,v])=>(
+            <div className="pp-stat" key={l}>
+              <div className="pp-sl">{l}</div>
+              <div className={`pp-sv num ${l==='MONITOR'?(data.monitor_active?'positive':'negative'):''}`}>{v}</div>
+            </div>
+          ))}
+        </div>
+
+        <div className="pp-body">
+          <div className="pp-right-col" style={{width:'100%'}}>
+
+            {/* open positions */}
+            {openPos.length > 0 && (
+              <div className="pp-open-positions">
+                <div className="panel-label" style={{marginBottom:6}}>OPEN POSITIONS — STOP LOSS WATCHING</div>
+                <div className="open-pos-hdr">
+                  <span>TICKER</span><span>SIDE</span><span>ENTRY</span><span>COST</span><span>STOP AT</span>
+                </div>
+                {openPos.map((p,i)=>(
+                  <div className="open-pos-row" key={i}>
+                    <span style={{fontSize:10,opacity:.7}}>{p.ticker?.split('-').slice(-1)[0]}</span>
+                    <span className={p.side==='yes'?'positive':'negative'}>{p.side?.toUpperCase()}</span>
+                    <span>{Math.round(p.entry_price*100)}¢</span>
+                    <span>${p.entry_usd}</span>
+                    <span className="negative">{Math.round(p.stop_at*100)}¢</span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* stop loss events */}
+            {slEvents.length > 0 && (
+              <div style={{marginBottom:12}}>
+                <div className="panel-label" style={{marginBottom:6}}>STOP LOSS / TAKE PROFIT EVENTS</div>
+                {slEvents.map((e,i)=>(
+                  <div key={i} style={{fontSize:11,padding:'3px 0',borderBottom:'1px solid #ffffff08',display:'flex',gap:12}}>
+                    <span className={e.reason?.includes('STOP')?'negative':'positive'}>
+                      {e.reason?.includes('STOP') ? '⛔ SL' : '✅ TP'}
+                    </span>
+                    <span style={{opacity:.7}}>{e.ticker?.split('-').slice(-1)[0]}</span>
+                    <span>{e.side?.toUpperCase()} @ {Math.round(e.entry_price*100)}¢ → {Math.round(e.exit_price*100)}¢</span>
+                    <span className={e.net_loss_usd>0?'negative':'positive'}>
+                      {e.net_loss_usd>0?`-$${e.net_loss_usd}`:`saved $${e.saved_usd}`}
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* fills / trade history */}
+            <div className={`trades-section-hdr ${newTrade?'trades-flash':''}`}>
+              <span>LIVE FILL HISTORY</span>
+              <span className="trades-count">{fills.length}</span>
+            </div>
+            {fills.length === 0
+              ? <div className="pp-empty-trades">Waiting for first live trade to fill…</div>
+              : <div className="trades-scroll">
+                  <div className="hist-hdr">
+                    <span>TICKER</span><span>SIDE</span><span>PRICE</span><span>CONTRACTS</span><span>COST</span>
+                  </div>
+                  {fills.map((f,i)=>(
+                    <div className="hist-row" key={i}>
+                      <span style={{fontSize:10}}>{f.ticker?.split('-').slice(-1)[0]}</span>
+                      <span className={f.side==='yes'?'positive':'negative'}>{f.side?.toUpperCase()}</span>
+                      <span>{Math.round(f.price*100)}¢</span>
+                      <span>{f.count}</span>
+                      <span>${f.cost}</span>
+                    </div>
+                  ))}
+                </div>
+            }
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+
 // ── MAIN ──────────────────────────────────────────────────────────────────────
 export default function App() {
   const [data,    setData]    = useState(null);
@@ -666,6 +800,7 @@ export default function App() {
   const [toast,   setToast]   = useState('');
   const [filling, setFilling] = useState(false);
   const [paperOpen, setPaperOpen] = useState(false);
+  const [liveOpen,  setLiveOpen]  = useState(false);
 
   useEffect(()=>{
     const ws=new WebSocket('ws://localhost:8000/ws');
@@ -734,6 +869,11 @@ export default function App() {
             </div>
           ))}
         </div>
+        <button className={`paper-toggle ${liveOpen?'pt-active':''}`}
+          style={liveOpen?{background:'#00ff88',color:'#000'}:{background:'#ff3366',color:'#fff'}}
+          onClick={()=>setLiveOpen(o=>!o)}>
+          {liveOpen ? '● LIVE ON' : '● LIVE TRADES'}
+        </button>
         <button className={`paper-toggle ${paperOpen?'pt-active':''}`} onClick={()=>setPaperOpen(o=>!o)}>
           {paperOpen ? '▣ PAPER MODE ON' : '▷ PAPER TRADE'}
         </button>
@@ -964,6 +1104,7 @@ export default function App() {
       {toast && <Toast msg={toast} onDone={()=>setToast('')}/>}
 
       {/* ── Paper Trading Panel ── */}
+      {liveOpen  && <KalshiLivePanel onClose={()=>setLiveOpen(false)}/>}
       {paperOpen && <PaperPanel onClose={()=>setPaperOpen(false)}/>}
     </div>
   );

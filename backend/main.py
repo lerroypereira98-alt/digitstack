@@ -1463,6 +1463,62 @@ async def kalshi_health():
     }
 
 
+@app.get("/api/kalshi/dashboard")
+async def kalshi_dashboard():
+    """
+    Single endpoint for the live trading dashboard.
+    Returns balance, open positions, recent fills, stop loss events, and running P&L.
+    """
+    if not KALSHI_AVAILABLE:
+        return {"available": False}
+    try:
+        balance_data  = _kalshi.get_balance()
+        balance_cents = balance_data.get("balance", 0)
+        fills         = _kalshi.get_fills(limit=20)
+
+        wins  = [f for f in fills if f.get("is_taker") is not None]  # all fills are resolved
+        total_pnl = 0.0
+        trade_history = []
+        for f in fills:
+            side        = f.get("side", "")
+            price       = f.get("yes_price", 50) / 100
+            count       = f.get("count", 1)
+            action      = f.get("action", "buy")
+            cost        = round(price * count, 2)
+            trade_history.append({
+                "ticker":  f.get("ticker", ""),
+                "side":    side.upper(),
+                "price":   price,
+                "count":   count,
+                "action":  action,
+                "cost":    cost,
+                "time":    f.get("created_time", ""),
+            })
+
+        open_positions = list(_live_positions.values())
+        sl_events      = _stop_loss_log[-10:]
+        win_count      = sum(1 for e in _stop_loss_log if "TAKE PROFIT" in e.get("reason", ""))
+        loss_count     = sum(1 for e in _stop_loss_log if "STOP LOSS" in e.get("reason", ""))
+
+        return {
+            "available":       True,
+            "balance_cents":   balance_cents,
+            "balance_usd":     round(balance_cents / 100, 2),
+            "open_positions":  open_positions,
+            "trade_history":   trade_history[:15],
+            "stop_loss_events": sl_events,
+            "monitor_active":  _monitor_active,
+            "stats": {
+                "total_trades":  len(trade_history),
+                "stop_losses":   loss_count,
+                "take_profits":  win_count,
+                "open_count":    len(open_positions),
+            }
+        }
+    except Exception as e:
+        return {"available": True, "error": str(e)}
+
+
 @app.get("/api/kalshi/balance")
 async def kalshi_balance():
     """Get live Kalshi account balance."""
