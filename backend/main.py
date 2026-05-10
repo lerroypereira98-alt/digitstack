@@ -554,16 +554,16 @@ def interpret_signal(trinity: Dict) -> Dict:
 def entry_allowed(market: "SimulatedMarket", signal_strength: str) -> Dict:
     """
     Only enter in the early part of the market where edge has time to play out.
-    Strong signals: enter in first 35% of market.
-    Moderate signals: enter in first 20% of market only.
+    Strong signals: enter in first 60% of market.
+    Moderate signals: enter in first 40% of market.
     """
     progress = market.progress
-    if signal_strength == "STRONG"   and progress <= 0.35:
-        return {"allowed": True, "reason": f"Early entry at {progress:.0%} progress"}
-    if signal_strength == "MODERATE" and progress <= 0.20:
-        return {"allowed": True, "reason": f"Early entry at {progress:.0%} progress"}
+    if signal_strength == "STRONG"   and progress <= 0.60:
+        return {"allowed": True, "reason": f"Entry at {progress:.0%} progress"}
+    if signal_strength == "MODERATE" and progress <= 0.40:
+        return {"allowed": True, "reason": f"Entry at {progress:.0%} progress"}
     return {"allowed": False,
-            "reason": f"Too late — {progress:.0%} into market (need <{'35' if signal_strength=='STRONG' else '20'}%)"}
+            "reason": f"Too late — {progress:.0%} into market (need <{'60' if signal_strength=='STRONG' else '40'}%)"}
 
 
 class SimulatedMarket:
