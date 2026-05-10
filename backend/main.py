@@ -574,13 +574,13 @@ def interpret_signal_confirmed(trinity: Dict, current_price: float, market_progr
 
         time_edge = min((market_progress - 0.73) / 0.22, 1.0)  # 0→1 over final 22% of market
 
-        if current_price >= 0.72 and votes >= 4:
+        if current_price >= 0.72 and votes >= 6:  # YES needs stronger model agreement
             win_prob = 0.82 + price_divergence * 0.25 + time_edge * 0.08
             return {"side": "YES", "win_prob": min(win_prob, 0.96),
                     "signal_strength": "STRONG", "tradeable": True,
                     "reason": f"15m: Price {current_price:.2f}↑ + {votes}/10 BUY @ {market_progress:.0%}"}
 
-        if current_price <= 0.28 and votes <= 6:
+        if current_price <= 0.28 and votes <= 4:  # NO needs stronger bearish consensus
             win_prob = 0.82 + price_divergence * 0.25 + time_edge * 0.08
             return {"side": "NO", "win_prob": min(win_prob, 0.96),
                     "signal_strength": "STRONG", "tradeable": True,
