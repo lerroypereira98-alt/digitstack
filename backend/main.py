@@ -542,60 +542,101 @@ def interpret_signal(trinity: Dict) -> Dict:
 
 
 # ── High-conviction signal: price confirmation + model agreement ──────────────
-def interpret_signal_confirmed(trinity: Dict, current_price: float, market_progress: float) -> Dict:
+def interpret_signal_confirmed(trinity: Dict, current_price: float, market_progress: float, duration_min: int = 5) -> Dict:
     """
-    The 90%+ win rate formula used by top Polymarket/Kalshi traders:
-      1. Market price has already moved decisively (>0.70 YES or <0.30 NO)
-      2. At least neutral model agreement with price direction
-      3. Late in the market lifecycle (55%+ through)
+    The 90%+ win rate formula used by top Polymarket/Kalshi traders.
 
-    When a market is at 0.78 YES with 30% of time remaining, it has a high
-    probability of resolving YES — very few reversals happen in the final stretch.
-    We capture that edge by entering late and confirming with model consensus.
+    Core principle: enter VERY late when the price is already extreme enough
+    that reversal is statistically unlikely given the time remaining.
+
+    5-min markets:  enter at 55%+ (2.25 min left) when price ≥0.64 / ≤0.36
+    15-min markets: enter at 73%+ (4 min left)  when price ≥0.72 / ≤0.28
+                    enter at 80%+ (3 min left)  when price ≥0.65 / ≤0.35
+
+    Top Kalshi/Polymarket 15-min traders win by waiting for price to lock in
+    at extreme levels before entering — the reversal risk drops dramatically
+    when less than 4 minutes remain AND price is already 70%+ committed.
     """
     votes      = trinity.get("buy_votes", 5)
     confidence = trinity.get("confidence", 0.5)
-
-    # Gate 1: must be in second half of market (outcome starting to crystallize)
-    if market_progress < 0.55:
-        return {"side": None, "win_prob": 0.0, "signal_strength": "WEAK", "tradeable": False,
-                "reason": "Too early — wait for market to crystallize"}
-
     price_divergence = abs(current_price - 0.5)
 
-    # === TIER 1: Strong price trend (≥0.64/≤0.36) + model neutral-or-agree ===
-    # Price has moved 14+ cents from mid; reversal rare in remaining time
-    if current_price >= 0.64 and votes >= 4:
-        time_edge = min((market_progress - 0.55) / 0.35, 1.0)
-        win_prob = 0.80 + price_divergence * 0.28 + time_edge * 0.06
-        return {"side": "YES", "win_prob": min(win_prob, 0.95),
-                "signal_strength": "STRONG", "tradeable": True,
-                "reason": f"Price {current_price:.2f}↑ + {votes}/10 votes BUY @ {market_progress:.0%}"}
+    if duration_min >= 15:
+        # ── 15-MINUTE MARKET LOGIC ────────────────────────────────────────────
+        # At 73% progress → 4 min left.  At 80% → 3 min left.
+        # We need the price MUCH more extreme to compensate for remaining time.
 
-    if current_price <= 0.36 and votes <= 6:
-        time_edge = min((market_progress - 0.55) / 0.35, 1.0)
-        win_prob = 0.80 + price_divergence * 0.28 + time_edge * 0.06
-        return {"side": "NO", "win_prob": min(win_prob, 0.95),
-                "signal_strength": "STRONG", "tradeable": True,
-                "reason": f"Price {current_price:.2f}↓ + {votes}/10 votes SELL @ {market_progress:.0%}"}
+        # Tier 1: Very extreme price (≥0.72/≤0.28) at 73%+ progress
+        # 15-min × 0.73 = 10.95 min in → only 4.05 min left
+        if market_progress < 0.73:
+            return {"side": None, "win_prob": 0.0, "signal_strength": "WEAK", "tradeable": False,
+                    "reason": f"Too early for 15-min — wait until 73%+ (currently {market_progress:.0%})"}
 
-    # === TIER 2: Moderate price trend (≥0.60/≤0.40) + model agrees (votes 6+/≤4) ===
-    if current_price >= 0.60 and votes >= 6:
-        time_edge = min((market_progress - 0.55) / 0.35, 1.0)
-        win_prob = 0.73 + price_divergence * 0.22 + time_edge * 0.05
-        return {"side": "YES", "win_prob": min(win_prob, 0.92),
-                "signal_strength": "STRONG", "tradeable": True,
-                "reason": f"Price {current_price:.2f}↑ + {votes}/10 votes BUY @ {market_progress:.0%}"}
+        time_edge = min((market_progress - 0.73) / 0.22, 1.0)  # 0→1 over final 22% of market
 
-    if current_price <= 0.40 and votes <= 4:
-        time_edge = min((market_progress - 0.55) / 0.35, 1.0)
-        win_prob = 0.73 + price_divergence * 0.22 + time_edge * 0.05
-        return {"side": "NO", "win_prob": min(win_prob, 0.92),
-                "signal_strength": "STRONG", "tradeable": True,
-                "reason": f"Price {current_price:.2f}↓ + {votes}/10 votes SELL @ {market_progress:.0%}"}
+        if current_price >= 0.72 and votes >= 4:
+            win_prob = 0.82 + price_divergence * 0.25 + time_edge * 0.08
+            return {"side": "YES", "win_prob": min(win_prob, 0.96),
+                    "signal_strength": "STRONG", "tradeable": True,
+                    "reason": f"15m: Price {current_price:.2f}↑ + {votes}/10 BUY @ {market_progress:.0%}"}
 
-    return {"side": None, "win_prob": 0.0, "signal_strength": "WEAK", "tradeable": False,
-            "reason": f"Price {current_price:.2f} not decisive enough @ {market_progress:.0%}"}
+        if current_price <= 0.28 and votes <= 6:
+            win_prob = 0.82 + price_divergence * 0.25 + time_edge * 0.08
+            return {"side": "NO", "win_prob": min(win_prob, 0.96),
+                    "signal_strength": "STRONG", "tradeable": True,
+                    "reason": f"15m: Price {current_price:.2f}↓ + {votes}/10 SELL @ {market_progress:.0%}"}
+
+        # Tier 2: Moderate extreme (≥0.65/≤0.35) but only if 80%+ done (3 min left)
+        if market_progress >= 0.80:
+            if current_price >= 0.65 and votes >= 5:
+                win_prob = 0.76 + price_divergence * 0.22 + time_edge * 0.06
+                return {"side": "YES", "win_prob": min(win_prob, 0.93),
+                        "signal_strength": "STRONG", "tradeable": True,
+                        "reason": f"15m: Price {current_price:.2f}↑ + {votes}/10 BUY @ {market_progress:.0%}"}
+
+            if current_price <= 0.35 and votes <= 5:
+                win_prob = 0.76 + price_divergence * 0.22 + time_edge * 0.06
+                return {"side": "NO", "win_prob": min(win_prob, 0.93),
+                        "signal_strength": "STRONG", "tradeable": True,
+                        "reason": f"15m: Price {current_price:.2f}↓ + {votes}/10 SELL @ {market_progress:.0%}"}
+
+        return {"side": None, "win_prob": 0.0, "signal_strength": "WEAK", "tradeable": False,
+                "reason": f"15m: Price {current_price:.2f} not decisive enough @ {market_progress:.0%}"}
+
+    else:
+        # ── 5-MINUTE MARKET LOGIC (unchanged) ────────────────────────────────
+        if market_progress < 0.55:
+            return {"side": None, "win_prob": 0.0, "signal_strength": "WEAK", "tradeable": False,
+                    "reason": "Too early — wait for market to crystallize"}
+
+        time_edge = min((market_progress - 0.55) / 0.35, 1.0)
+
+        if current_price >= 0.64 and votes >= 4:
+            win_prob = 0.80 + price_divergence * 0.28 + time_edge * 0.06
+            return {"side": "YES", "win_prob": min(win_prob, 0.95),
+                    "signal_strength": "STRONG", "tradeable": True,
+                    "reason": f"Price {current_price:.2f}↑ + {votes}/10 votes BUY @ {market_progress:.0%}"}
+
+        if current_price <= 0.36 and votes <= 6:
+            win_prob = 0.80 + price_divergence * 0.28 + time_edge * 0.06
+            return {"side": "NO", "win_prob": min(win_prob, 0.95),
+                    "signal_strength": "STRONG", "tradeable": True,
+                    "reason": f"Price {current_price:.2f}↓ + {votes}/10 votes SELL @ {market_progress:.0%}"}
+
+        if current_price >= 0.60 and votes >= 6:
+            win_prob = 0.73 + price_divergence * 0.22 + time_edge * 0.05
+            return {"side": "YES", "win_prob": min(win_prob, 0.92),
+                    "signal_strength": "STRONG", "tradeable": True,
+                    "reason": f"Price {current_price:.2f}↑ + {votes}/10 votes BUY @ {market_progress:.0%}"}
+
+        if current_price <= 0.40 and votes <= 4:
+            win_prob = 0.73 + price_divergence * 0.22 + time_edge * 0.05
+            return {"side": "NO", "win_prob": min(win_prob, 0.92),
+                    "signal_strength": "STRONG", "tradeable": True,
+                    "reason": f"Price {current_price:.2f}↓ + {votes}/10 votes SELL @ {market_progress:.0%}"}
+
+        return {"side": None, "win_prob": 0.0, "signal_strength": "WEAK", "tradeable": False,
+                "reason": f"Price {current_price:.2f} not decisive enough @ {market_progress:.0%}"}
 
 
 # ── Entry timing gate ─────────────────────────────────────────────────────────
@@ -783,7 +824,8 @@ class PaperAccount:
         # Price-confirmed signal: combine MiroFish votes with current market price
         current_price = self.market.yes_price
         progress = self.market.progress
-        sig = interpret_signal_confirmed(trinity, current_price, progress)
+        duration_min = self.market.duration_min
+        sig = interpret_signal_confirmed(trinity, current_price, progress, duration_min)
         if not sig["tradeable"]:
             self._log_auto(f"SKIP — {sig['reason']}")
             return
@@ -1060,17 +1102,19 @@ async def health_check():
 class BacktestTrade:
     """
     Late-entry price confirmation strategy.
-    - Enters 55-85% through market lifecycle (when outcome is crystallizing)
-    - Only trades when market price is already strongly directional (≥0.70 or ≤0.30)
-    - Uses models to confirm alignment with price direction
-    - Entry price = actual current market price (not random)
+    Duration-aware: 5-min uses 55-85% entry range; 15-min uses 73-95% entry range.
     """
-    def __init__(self, market_price_path):
+    def __init__(self, market_price_path, duration_min: int = 5):
         self.price_path = market_price_path
+        self.duration_min = duration_min
         total = len(market_price_path)
 
-        # Sample entry point in the second half of market life
-        entry_pct = np.random.uniform(0.55, 0.85)
+        # Entry window differs by duration to match live trading thresholds
+        if duration_min >= 15:
+            entry_pct = np.random.uniform(0.73, 0.95)  # 73-95% for 15-min
+        else:
+            entry_pct = np.random.uniform(0.55, 0.85)  # 55-85% for 5-min
+
         entry_idx = int(entry_pct * total)
 
         # Current market price at this entry point (NOT future price)
@@ -1084,12 +1128,11 @@ class BacktestTrade:
             'volumes': (np.random.rand(len(history)) * 1000).tolist(),
             'bid_volume': float(np.random.rand() * 500),
             'ask_volume': float(np.random.rand() * 500),
-            'time_to_expiry': (1.0 - entry_pct) * 300,
+            'time_to_expiry': (1.0 - entry_pct) * (duration_min * 60),
             'spread': float(np.random.rand() * 0.02),
         }
         self.trinity = bot.mirofish.get_consensus(self.market_data)
-        # Use price-confirmed signal instead of model-only signal
-        self.signal = interpret_signal_confirmed(self.trinity, self.current_price, entry_pct)
+        self.signal = interpret_signal_confirmed(self.trinity, self.current_price, entry_pct, duration_min)
 
     def execute(self, balance):
         if not self.signal['tradeable']:
@@ -1124,17 +1167,19 @@ class BacktestTrade:
         }
 
 @app.post("/api/backtest")
-async def run_backtest(num_trades: int = 100):
+async def run_backtest(num_trades: int = 100, duration_min: int = 5):
     """Run instant backtest without market delays. Reports aggregate stats."""
     if num_trades < 10 or num_trades > 5000:
         return {"error": f"num_trades must be 10-5000 (got {num_trades})"}
+    if duration_min not in (5, 15):
+        return {"error": "duration_min must be 5 or 15"}
 
     results = []
     balance = 10000
 
     for i in range(num_trades):
-        path = SimulatedMarket(duration_min=5, speed=1)._path
-        bt = BacktestTrade(path)
+        path = SimulatedMarket(duration_min=duration_min, speed=1)._path
+        bt = BacktestTrade(path, duration_min=duration_min)
         trade = bt.execute(balance)
         if trade:
             balance += trade['pnl']
