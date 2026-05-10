@@ -726,7 +726,7 @@ class SimulatedMarket:
 
 
 class PaperAccount:
-    def __init__(self):
+    def __init__(self, stop_loss_pct: float = 0.10):
         self.balance   = PAPER_STARTING_BALANCE
         self.positions: List[Dict] = []
         self.history:   List[Dict] = []
@@ -737,6 +737,8 @@ class PaperAccount:
         self.auto_trade: bool = False
         self.auto_log:   List[Dict] = []
         self._traded_market_ids: set = set()
+        # risk management
+        self.stop_loss_pct = stop_loss_pct  # e.g. 0.10 = close if down 10%
 
     # ── market management ────────────────────────────────────────────────────
 
@@ -752,6 +754,10 @@ class PaperAccount:
 
     def tick(self, trinity: Optional[Dict] = None):
         """Called every WS cycle. Resolves done markets, dequeues, auto-trades."""
+        # Check stop losses on open positions
+        if self.market:
+            self._check_stop_losses()
+
         if self.market and not self.market.resolved and self.market.is_done:
             self._resolve_current_market()
 
@@ -796,6 +802,35 @@ class PaperAccount:
     def _log_auto(self, msg: str):
         entry = {"ts": datetime.now().isoformat(), "msg": msg}
         self.auto_log = [entry] + self.auto_log[:49]
+
+    def _check_stop_losses(self):
+        """Close positions that breach stop loss threshold."""
+        if not self.market or self.market.resolved:
+            return
+
+        current_yes = self.market.yes_price
+        current_no = 1.0 - current_yes
+
+        for pos in list(self.positions):
+            if pos["market_id"] != self.market.market_id:
+                continue  # Only check positions in current market
+
+            # Calculate loss ratio
+            if pos["side"] == "YES":
+                current_price = current_yes
+            else:
+                current_price = current_no
+
+            entry_price = pos["entry_price"]
+            loss_pct = (entry_price - current_price) / entry_price
+
+            # Execute stop loss if breached
+            if loss_pct >= self.stop_loss_pct:
+                self._log_auto(
+                    f"STOP LOSS HIT — {pos['side']} down {loss_pct:.1%} "
+                    f"(entry {entry_price:.4f} → {current_price:.4f})"
+                )
+                self.close_position(pos["id"])
 
     def _resolve_current_market(self):
         result  = self.market.resolve()
