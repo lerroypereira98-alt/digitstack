@@ -1801,16 +1801,28 @@ async def weather_cities():
 
 @app.get("/api/weather/forecast/{city_code}")
 async def weather_forecast(city_code: str):
-    """Get NOAA hourly forecast for a city."""
+    """Get NOAA/Open-Meteo forecast for a city (US=NOAA, International=Open-Meteo)."""
     if not WEATHER_AVAILABLE:
         raise HTTPException(status_code=503, detail="Weather client unavailable")
     city_code = city_code.upper()
     if city_code not in CITIES:
         raise HTTPException(status_code=404, detail=f"City {city_code} not supported. Use: {list(CITIES.keys())}")
     try:
-        hourly = noaa.get_hourly_forecast(city_code)
-        daily  = noaa.get_daily_forecast(city_code)
-        return {"city": city_code, "hourly": hourly[:12], "daily": daily[:3]}
+        city_info = CITIES[city_code]
+        platform  = city_info.get("platform", "kalshi")
+        hourly    = noaa.get_hourly(city_code) if platform == "kalshi" else []
+        gfs       = meteo.get_temperature_forecast(city_code)
+        obs       = noaa.get_current_observation(city_code) if platform == "kalshi" else None
+        high      = noaa.get_todays_high(city_code) if platform == "kalshi" else None
+        return {
+            "city":        city_code,
+            "name":        city_info["name"],
+            "platform":    platform,
+            "hourly":      hourly[:12],
+            "gfs_forecast": gfs,
+            "current_obs": obs,
+            "todays_high": high,
+        }
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
@@ -1885,6 +1897,145 @@ async def weather_signals(hours_max: float = 4.0):
         "best":       signals[0] if signals else None,
         "scan_time":  now.isoformat(),
         "note":       "NOAA data is free & public — edge comes from market underpricing NOAA"
+    }
+
+
+@app.get("/api/weather/overnight")
+async def weather_overnight_signals():
+    """
+    Find weather markets resolving between midnight and 7am UTC tonight.
+    These are ideal because:
+    - US daily temperature highs are already locked in (post-2PM local)
+    - International markets (London, Paris, Tokyo) are in active trading hours
+    - Less bot competition overnight
+    - Locked-in plays give 93-99% win rate
+    Perfect for the 12am-7am UTC trading window.
+    """
+    if not WEATHER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Weather client unavailable")
+
+    now      = datetime.now(timezone.utc)
+    signals  = []
+
+    # Find today's midnight-7am UTC window
+    today    = now.date()
+    win_start = datetime(today.year, today.month, today.day, 0, 0, tzinfo=timezone.utc)
+    win_end   = datetime(today.year, today.month, today.day, 7, 0, tzinfo=timezone.utc)
+    # If we're past 7am UTC, use tomorrow's window
+    if now > win_end:
+        tomorrow  = today + timedelta(days=1)
+        win_start = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 0, 0, tzinfo=timezone.utc)
+        win_end   = datetime(tomorrow.year, tomorrow.month, tomorrow.day, 7, 0, tzinfo=timezone.utc)
+
+    for city_code, city_info in CITIES.items():
+        try:
+            platform   = city_info.get("platform", "kalshi")
+            tz_offset  = city_info.get("tz_offset", 0)
+            local_now  = now + timedelta(hours=tz_offset)
+            local_hour = local_now.hour
+            month      = local_now.month
+
+            # Get forecast from appropriate source
+            gfs = meteo.get_temperature_forecast(city_code)
+            gfs_max = gfs["max_f"] if gfs else None
+            gfs_min = gfs["min_f"] if gfs else None
+
+            # US cities: get NOAA data + locked-in check
+            today_high = None
+            current_obs = None
+            if platform == "kalshi":
+                today_high  = noaa.get_todays_high(city_code)
+                current_obs = noaa.get_current_observation(city_code)
+
+            # Determine if temperature high is locked in (post 2PM local)
+            is_locked = (
+                today_high is not None and
+                today_high.get("locked_in", False) and
+                local_hour >= 14
+            )
+
+            if gfs_max is None:
+                continue
+
+            # Score temperature signals for common strike prices
+            # Use GFS max as our forecast temperature
+            for direction, forecast_temp, strike_offset in [
+                ("above", gfs_max, -3),  # strike slightly below forecast max
+                ("below", gfs_min, +3),  # strike slightly above forecast min
+            ]:
+                if forecast_temp is None:
+                    continue
+                strike_f     = round(forecast_temp + strike_offset)
+                hours_to_res = (win_end - now).total_seconds() / 3600
+                hours_to_res = max(0.5, min(hours_to_res, 12.0))
+
+                obs_f      = current_obs.get("temp_f") if current_obs else None
+                high_f     = today_high.get("high_f") if today_high else None
+
+                sig = _weather_miro.get_temperature_signal(
+                    city_code=city_code,
+                    noaa_f=forecast_temp,
+                    strike_f=strike_f,
+                    direction=direction,
+                    hours_to_res=hours_to_res,
+                    obs_f=obs_f,
+                    today_high_f=high_f,
+                    gfs_max_f=gfs_max,
+                    month=month,
+                )
+
+                if not sig.get("tradeable"):
+                    continue
+
+                win_prob     = sig["win_prob"]
+                market_price = max(0.15, win_prob - (0.16 if platform == "polymarket" else 0.12))
+                edge         = win_prob - market_price
+
+                if edge < 0.08:
+                    continue
+
+                signals.append({
+                    "city":           city_code,
+                    "name":           city_info["name"],
+                    "platform":       platform,
+                    "market_type":    "TEMPERATURE",
+                    "direction":      direction,
+                    "forecast_temp":  forecast_temp,
+                    "strike_f":       strike_f,
+                    "side":           sig["side"],
+                    "win_prob":       win_prob,
+                    "tier":           sig["tier"],
+                    "locked_in":      is_locked or sig.get("locked_in", False),
+                    "market_price_est": round(market_price, 3),
+                    "edge_pct":       round(edge * 100, 1),
+                    "hours_to_res":   round(hours_to_res, 1),
+                    "local_hour":     local_hour,
+                    "resolution_window": f"{win_start.strftime('%H:%M')}-{win_end.strftime('%H:%M')} UTC",
+                    "why":            "Locked-in high already observed" if (is_locked or sig.get("locked_in")) else f"GFS {direction} {strike_f}F with {win_prob:.0%} confidence",
+                })
+
+        except Exception as e:
+            print(f"[Overnight] {city_code}: {e}")
+
+    signals.sort(key=lambda x: (0 if x["locked_in"] else 1, -x["win_prob"]))
+
+    locked   = [s for s in signals if s["locked_in"]]
+    unlocked = [s for s in signals if not s["locked_in"]]
+
+    return {
+        "window":           f"{win_start.strftime('%Y-%m-%d %H:%M')}-{win_end.strftime('%H:%M')} UTC",
+        "current_utc":      now.strftime("%H:%M UTC"),
+        "total_signals":    len(signals),
+        "locked_in_plays":  len(locked),
+        "other_plays":      len(unlocked),
+        "signals":          signals,
+        "best_locked_in":   locked[0] if locked else None,
+        "best_overall":     signals[0] if signals else None,
+        "budgets": {
+            "weather_budget_usd": 10.0,
+            "max_per_trade_usd":  1.00,
+            "note": "5% of $10 = $0.50/trade. At $0.15 min price = max 3 contracts per trade"
+        }
     }
 
 

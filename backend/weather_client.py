@@ -38,18 +38,33 @@ MIN_WIN_PROB = 0.72   # minimum 72% confidence to trade
 # Settlement ASOS stations - use airport stations, NOT city-center coordinates
 # Markets resolve to these specific stations. City-center apps are 3-8F warmer in summer.
 SETTLEMENT_STATIONS = {
-    "NYC": {"station": "KNYC",  "lat": 40.7789, "lon": -73.9692, "name": "New York (Central Park)",  "tz_offset": -4},
-    "LA":  {"station": "KLAX",  "lat": 33.9425, "lon": -118.4081,"name": "Los Angeles (LAX)",         "tz_offset": -7},
-    "CHI": {"station": "KORD",  "lat": 41.9742, "lon": -87.9073, "name": "Chicago (O'Hare)",          "tz_offset": -5},
-    "MIA": {"station": "KMIA",  "lat": 25.7959, "lon": -80.2870, "name": "Miami (MIA Airport)",       "tz_offset": -4},
-    "HOU": {"station": "KHOU",  "lat": 29.6454, "lon": -95.2789, "name": "Houston (Hobby)",           "tz_offset": -5},
-    "PHX": {"station": "KPHX",  "lat": 33.4373, "lon": -112.0078,"name": "Phoenix (Sky Harbor)",      "tz_offset": -7},
-    "SEA": {"station": "KSEA",  "lat": 47.4489, "lon": -122.3094,"name": "Seattle (SeaTac)",          "tz_offset": -7},
-    "DEN": {"station": "KDEN",  "lat": 39.8561, "lon": -104.6737,"name": "Denver (DEN Airport)",      "tz_offset": -6},
-    "ATL": {"station": "KATL",  "lat": 33.6367, "lon": -84.4281, "name": "Atlanta (Hartsfield)",      "tz_offset": -4},
-    "DAL": {"station": "KDAL",  "lat": 32.8481, "lon": -96.8512, "name": "Dallas (Love Field)",       "tz_offset": -5},
-    "AUS": {"station": "KAUS",  "lat": 30.1975, "lon": -97.6664, "name": "Austin (Bergstrom)",        "tz_offset": -5},
-    "BOS": {"station": "KBOS",  "lat": 42.3606, "lon": -71.0097, "name": "Boston (Logan)",            "tz_offset": -4},
+    # ── US Cities (Kalshi) ────────────────────────────────────────────────────
+    "NYC": {"station": "KNYC",  "lat": 40.7789, "lon": -73.9692,  "name": "New York (Central Park)",  "tz_offset": -4, "platform": "kalshi"},
+    "LA":  {"station": "KLAX",  "lat": 33.9425, "lon": -118.4081, "name": "Los Angeles (LAX)",         "tz_offset": -7, "platform": "kalshi"},
+    "CHI": {"station": "KORD",  "lat": 41.9742, "lon": -87.9073,  "name": "Chicago (O'Hare)",          "tz_offset": -5, "platform": "kalshi"},
+    "MIA": {"station": "KMIA",  "lat": 25.7959, "lon": -80.2870,  "name": "Miami (MIA Airport)",       "tz_offset": -4, "platform": "kalshi"},
+    "HOU": {"station": "KHOU",  "lat": 29.6454, "lon": -95.2789,  "name": "Houston (Hobby)",           "tz_offset": -5, "platform": "kalshi"},
+    "PHX": {"station": "KPHX",  "lat": 33.4373, "lon": -112.0078, "name": "Phoenix (Sky Harbor)",      "tz_offset": -7, "platform": "kalshi"},
+    "SEA": {"station": "KSEA",  "lat": 47.4489, "lon": -122.3094, "name": "Seattle (SeaTac)",          "tz_offset": -7, "platform": "kalshi"},
+    "DEN": {"station": "KDEN",  "lat": 39.8561, "lon": -104.6737, "name": "Denver (DEN Airport)",      "tz_offset": -6, "platform": "kalshi"},
+    "ATL": {"station": "KATL",  "lat": 33.6367, "lon": -84.4281,  "name": "Atlanta (Hartsfield)",      "tz_offset": -4, "platform": "kalshi"},
+    "DAL": {"station": "KDAL",  "lat": 32.8481, "lon": -96.8512,  "name": "Dallas (Love Field)",       "tz_offset": -5, "platform": "kalshi"},
+    "AUS": {"station": "KAUS",  "lat": 30.1975, "lon": -97.6664,  "name": "Austin (Bergstrom)",        "tz_offset": -5, "platform": "kalshi"},
+    "BOS": {"station": "KBOS",  "lat": 42.3606, "lon": -71.0097,  "name": "Boston (Logan)",            "tz_offset": -4, "platform": "kalshi"},
+
+    # ── International Cities (Polymarket) ─────────────────────────────────────
+    # These use Open-Meteo for forecasts (NOAA only covers US)
+    # Per research: secondary/international cities have LESS bot competition = wider spreads
+    "LON": {"station": "EGLL",  "lat": 51.4775, "lon": -0.4614,   "name": "London (Heathrow)",         "tz_offset": 1,  "platform": "polymarket"},
+    "PAR": {"station": "LFPG",  "lat": 49.0097, "lon": 2.5479,    "name": "Paris (CDG)",               "tz_offset": 2,  "platform": "polymarket"},
+    "BER": {"station": "EDDB",  "lat": 52.3667, "lon": 13.5033,   "name": "Berlin (Brandenburg)",      "tz_offset": 2,  "platform": "polymarket"},
+    "SYD": {"station": "YSSY",  "lat": -33.9461,"lon": 151.1772,  "name": "Sydney (Kingsford Smith)",  "tz_offset": 10, "platform": "polymarket"},
+    "TKY": {"station": "RJTT",  "lat": 35.5494, "lon": 139.7798,  "name": "Tokyo (Haneda)",            "tz_offset": 9,  "platform": "polymarket"},
+    "BUE": {"station": "SAEZ",  "lat": -34.8222,"lon": -58.5358,  "name": "Buenos Aires (Ezeiza)",     "tz_offset": -3, "platform": "polymarket"},
+    "CPT": {"station": "FACT",  "lat": -33.9715,"lon": 18.6021,   "name": "Cape Town (Intl)",          "tz_offset": 2,  "platform": "polymarket"},
+    "DUB": {"station": "EIDW",  "lat": 53.4213, "lon": -6.2701,   "name": "Dublin (Airport)",          "tz_offset": 1,  "platform": "polymarket"},
+    "AMS": {"station": "EHAM",  "lat": 52.3086, "lon": 4.7639,    "name": "Amsterdam (Schiphol)",      "tz_offset": 2,  "platform": "polymarket"},
+    "SIN": {"station": "WSSS",  "lat": 1.3644,  "lon": 103.9915,  "name": "Singapore (Changi)",        "tz_offset": 8,  "platform": "polymarket"},
 }
 
 RAIN_CLIMATOLOGY = {
