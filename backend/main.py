@@ -1793,6 +1793,16 @@ async def kalshi_fills(limit: int = 20):
 # WEATHER MARKET ENDPOINTS
 # ============================================================================
 
+WEATHER_BUDGET_USD   = 10.00   # $10 budget for weather bot
+WEATHER_MAX_TRADE    = 1.00    # max $1.00 per weather trade
+WEATHER_MIN_TRADE    = 0.15    # never buy below 15c
+WEATHER_RISK_PCT     = 0.05    # 5% of weather budget per trade
+
+# Live weather position tracker (separate from BTC positions)
+_weather_positions: Dict[str, Dict] = []
+_weather_log:       List[Dict]      = []
+
+
 @app.get("/api/weather/cities")
 async def weather_cities():
     """List all supported cities for weather market scanning."""
@@ -2037,6 +2047,204 @@ async def weather_overnight_signals():
             "note": "5% of $10 = $0.50/trade. At $0.15 min price = max 3 contracts per trade"
         }
     }
+
+
+@app.get("/api/weather/kalshi-markets")
+async def weather_kalshi_markets():
+    """
+    Discover all live Kalshi weather markets and match them to NOAA signals.
+    This is the bridge between our signal scanner and actual tradeable markets.
+    """
+    _require_kalshi()
+    if not WEATHER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Weather client unavailable")
+    try:
+        # Try specific series first, then broad search
+        markets = _kalshi.get_weather_markets()
+        if not markets:
+            markets = _kalshi.search_weather_markets()
+
+        # Enrich each market with NOAA signal
+        enriched = []
+        for m in markets:
+            title      = m.get("title", "").lower()
+            yes_bid    = m.get("yes_bid", 0) / 100
+            yes_ask    = m.get("yes_ask", 0) / 100
+            mid_price  = (yes_bid + yes_ask) / 2 if yes_bid and yes_ask else yes_bid or yes_ask
+            ticker     = m.get("ticker", "")
+
+            # Detect city from title
+            city_map = {
+                "new york": "NYC", "chicago": "CHI", "miami": "MIA",
+                "los angeles": "LA", "houston": "HOU", "phoenix": "PHX",
+                "seattle": "SEA", "denver": "DEN", "atlanta": "ATL",
+                "dallas": "DAL", "austin": "AUS", "boston": "BOS",
+            }
+            city_code = next((v for k, v in city_map.items() if k in title), None)
+
+            enriched.append({
+                "ticker":     ticker,
+                "title":      m.get("title", ""),
+                "yes_bid":    yes_bid,
+                "yes_ask":    yes_ask,
+                "mid_price":  round(mid_price, 3),
+                "city_code":  city_code,
+                "close_time": m.get("close_time", ""),
+                "volume":     m.get("volume", 0),
+                "status":     m.get("status", ""),
+            })
+
+        enriched.sort(key=lambda x: x["volume"], reverse=True)
+        return {
+            "markets":  enriched,
+            "count":    len(enriched),
+            "note":     "Match city_code to /api/weather/overnight signals to find trades"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/weather/auto-signal")
+async def weather_auto_signal():
+    """
+    Full pipeline: scan Kalshi weather markets + NOAA signals + size the trade.
+    Returns the single best trade ready to POST to /api/kalshi/order.
+    Priority: locked-in plays first, then TierC, TierB, TierA.
+    """
+    _require_kalshi()
+    if not WEATHER_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Weather client unavailable")
+    try:
+        # 1. Get live Kalshi weather markets
+        markets = _kalshi.get_weather_markets()
+        if not markets:
+            markets = _kalshi.search_weather_markets()
+
+        # 2. Get balance and compute budget
+        bal_data     = _kalshi.get_balance()
+        balance_usd  = bal_data.get("balance", 0) / 100
+        risk_budget  = min(balance_usd * WEATHER_RISK_PCT, WEATHER_MAX_TRADE)
+        risk_budget  = max(risk_budget, WEATHER_MIN_TRADE)
+
+        # 3. Get overnight NOAA signals
+        now   = datetime.now(timezone.utc)
+        month = now.month
+        noaa_signals = []
+
+        for city_code in ["NYC", "CHI", "MIA", "LA", "HOU", "PHX", "ATL", "DAL", "AUS", "BOS"]:
+            try:
+                gfs      = meteo.get_temperature_forecast(city_code)
+                obs      = noaa.get_current_observation(city_code)
+                high     = noaa.get_todays_high(city_code)
+                if not gfs:
+                    continue
+
+                gfs_max = gfs.get("max_f")
+                gfs_min = gfs.get("min_f")
+                obs_f   = obs.get("temp_f") if obs else None
+                high_f  = high.get("high_f") if high else None
+                tz_off  = CITIES[city_code]["tz_offset"]
+                local_h = (now + timedelta(hours=tz_off)).hour
+
+                for direction, forecast_f, s_off in [("above", gfs_max, -3), ("below", gfs_min, +3)]:
+                    if forecast_f is None:
+                        continue
+                    strike = round(forecast_f + s_off)
+                    sig    = _weather_miro.get_temperature_signal(
+                        city_code=city_code, noaa_f=forecast_f, strike_f=strike,
+                        direction=direction, hours_to_res=4.0,
+                        obs_f=obs_f, today_high_f=high_f, gfs_max_f=gfs_max, month=month
+                    )
+                    if sig.get("tradeable") and sig["win_prob"] >= 0.80:
+                        noaa_signals.append({
+                            "city_code":  city_code,
+                            "direction":  direction,
+                            "strike_f":   strike,
+                            "win_prob":   sig["win_prob"],
+                            "tier":       sig["tier"],
+                            "locked_in":  sig.get("locked_in", False),
+                            "side":       sig["side"],
+                        })
+            except Exception:
+                pass
+
+        if not noaa_signals:
+            return {
+                "signal": None,
+                "balance_usd": round(balance_usd, 2),
+                "message": "No qualifying weather signals right now — check again in 30 min",
+                "markets_available": len(markets),
+            }
+
+        # 4. Match NOAA signal to Kalshi market
+        city_map = {
+            "NYC": ["new york", "nyc"], "CHI": ["chicago"], "MIA": ["miami"],
+            "LA":  ["los angeles", "la"], "HOU": ["houston"], "PHX": ["phoenix"],
+            "ATL": ["atlanta"], "DAL": ["dallas"], "AUS": ["austin"], "BOS": ["boston"],
+        }
+
+        # Sort: locked-in first, then by win prob
+        noaa_signals.sort(key=lambda x: (0 if x["locked_in"] else 1, -x["win_prob"]))
+        best_sig = noaa_signals[0]
+
+        # Find matching Kalshi market
+        keywords = city_map.get(best_sig["city_code"], [])
+        matched  = None
+        for m in markets:
+            title = m.get("title", "").lower()
+            if any(kw in title for kw in keywords):
+                if best_sig["direction"] == "above" and ("high" in title or "above" in title or "exceed" in title):
+                    matched = m
+                    break
+                elif best_sig["direction"] == "below" and ("low" in title or "below" in title):
+                    matched = m
+                    break
+
+        if not matched:
+            return {
+                "signal":           best_sig,
+                "kalshi_market":    None,
+                "balance_usd":      round(balance_usd, 2),
+                "message":          f"Signal found for {best_sig['city_code']} but no matching Kalshi market open. Place manually at kalshi.com/hub/weather",
+                "all_signals":      noaa_signals[:5],
+            }
+
+        # 5. Size the trade
+        yes_bid = matched.get("yes_bid", 0) / 100
+        yes_ask = matched.get("yes_ask", 0) / 100
+        side    = best_sig["side"].lower()
+        entry_price = yes_ask if side == "yes" else (1 - yes_bid)
+        entry_cents = round(entry_price * 100)
+        contracts   = max(1, int(risk_budget / entry_price)) if entry_price > 0 else 1
+        cost_usd    = round(contracts * entry_price, 2)
+
+        return {
+            "balance_usd":    round(balance_usd, 2),
+            "risk_budget_usd": round(risk_budget, 2),
+            "signal":         best_sig,
+            "kalshi_market": {
+                "ticker":  matched.get("ticker"),
+                "title":   matched.get("title"),
+                "yes_bid": yes_bid,
+                "yes_ask": yes_ask,
+                "volume":  matched.get("volume", 0),
+            },
+            "order": {
+                "ticker":      matched.get("ticker"),
+                "side":        side,
+                "count":       contracts,
+                "price_cents": entry_cents,
+                "cost_usd":    cost_usd,
+            },
+            "stop_loss": {
+                "triggers_at": round(entry_price * 0.65, 3),
+                "max_loss_usd": round(cost_usd * 0.35, 2),
+            },
+            "note": "POST the 'order' to /api/kalshi/order to execute",
+            "all_signals": noaa_signals[:5],
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
 
 
 @app.post("/api/weather/backtest")

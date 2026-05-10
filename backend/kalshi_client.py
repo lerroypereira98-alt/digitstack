@@ -114,6 +114,60 @@ class KalshiClient:
 
     # ── Markets ───────────────────────────────────────────────────────────────
 
+    def get_weather_markets(self, status: str = "open") -> List[Dict]:
+        """
+        Get all open Kalshi weather markets.
+        Kalshi weather series tickers: HIGH* (temp high), LOW* (temp low), RAIN* (precipitation)
+        Covers all US cities available on Kalshi.
+        """
+        weather_series = [
+            "HIGHNY", "LOWNY",   # New York
+            "HIGHCHI","LOWCHI",  # Chicago
+            "HIGHMIA","LOWMIA",  # Miami
+            "HIGHLA", "LOWLA",   # Los Angeles
+            "HIGHHOU","LOWHOU",  # Houston
+            "HIGHPHX","LOWPHX",  # Phoenix
+            "HIGHSEA","LOWSEA",  # Seattle
+            "HIGHDEN","LOWDEN",  # Denver
+            "HIGHATL","LOWATL",  # Atlanta
+            "HIGHDAL","LOWDAL",  # Dallas
+            "HIGHAUS","LOWAUS",  # Austin
+            "HIGHBOS","LOWBOS",  # Boston
+        ]
+        all_markets = []
+        for series in weather_series:
+            try:
+                data = self._get("/markets", {"status": status, "series_ticker": series, "limit": 20})
+                all_markets.extend(data.get("markets", []))
+            except Exception:
+                pass
+        return all_markets
+
+    def search_weather_markets(self, status: str = "open") -> List[Dict]:
+        """
+        Broader weather market search — discovers any weather market format.
+        Falls back to keyword search if series tickers don't match.
+        """
+        try:
+            data = self._get("/markets", {
+                "status":  status,
+                "limit":   100,
+                "category": "weather",
+            })
+            markets = data.get("markets", [])
+            if markets:
+                return markets
+        except Exception:
+            pass
+        # Fallback: get all open markets and filter by title keywords
+        try:
+            data = self._get("/markets", {"status": status, "limit": 200})
+            all_m = data.get("markets", [])
+            weather_kw = ["temperature", "high", "low", "rain", "snow", "wind", "°f", "degrees"]
+            return [m for m in all_m if any(kw in m.get("title", "").lower() for kw in weather_kw)]
+        except Exception:
+            return []
+
     def get_btc_markets(self, status: str = "open") -> List[Dict]:
         """Get active BTC 15-min markets."""
         data = self._get("/markets", {
