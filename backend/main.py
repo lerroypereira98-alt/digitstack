@@ -1424,14 +1424,37 @@ async def kalshi_signals():
     """
     Scan live Kalshi BTC markets and return TierA/B/C entry signals.
     Only returns markets at 73%+ progress with price ≥0.74 or ≤0.26.
+    Each signal includes how many contracts fit within the $0.50 safety cap.
     """
     _require_kalshi()
     try:
         signals = _kalshi.scan_btc_15min_signals()
+
+        # Annotate each signal with how many contracts fit within the safety cap
+        for s in signals:
+            entry_cents = round(s["entry_price"] * 100)
+            if entry_cents > 0:
+                max_contracts = int(KALSHI_MAX_TRADE_USD * 100 / entry_cents)
+                min_contracts = max(1, int(KALSHI_MIN_TRADE_USD * 100 / entry_cents))
+                s["suggested_contracts"] = max(1, max_contracts)
+                s["cost_at_1_contract"]  = round(entry_cents / 100, 2)
+                s["max_contracts_50c"]   = max_contracts
+                s["tradeable_within_cap"] = max_contracts >= 1
+            else:
+                s["suggested_contracts"] = 1
+                s["tradeable_within_cap"] = False
+
+        tradeable = [s for s in signals if s.get("tradeable_within_cap")]
         return {
             "signals": signals,
             "count": len(signals),
-            "best": signals[0] if signals else None,
+            "tradeable_within_50c_cap": len(tradeable),
+            "best": tradeable[0] if tradeable else (signals[0] if signals else None),
+            "cap_info": {
+                "min_usd": KALSHI_MIN_TRADE_USD,
+                "max_usd": KALSHI_MAX_TRADE_USD,
+                "note": "YES signals at 74c+ cost $0.74/contract — use NO signals (≤26c) for $0.50 cap"
+            }
         }
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
@@ -1449,6 +1472,10 @@ async def kalshi_market_detail(ticker: str):
         raise HTTPException(status_code=502, detail=str(e))
 
 
+KALSHI_MIN_TRADE_USD = 0.10   # minimum $0.10 per order
+KALSHI_MAX_TRADE_USD = 0.50   # maximum $0.50 per order — safety cap for live testing
+
+
 class KalshiOrderRequest(BaseModel):
     ticker: str
     side: str          # "yes" or "no"
@@ -1462,6 +1489,7 @@ async def kalshi_place_order(req: KalshiOrderRequest):
     """
     Place a live order on Kalshi.
     WARNING: This places a REAL order with REAL money.
+    Hard cap: $0.10 min / $0.50 max per order (live testing safety limit).
     """
     _require_kalshi()
     if req.side.lower() not in ("yes", "no"):
@@ -1470,6 +1498,22 @@ async def kalshi_place_order(req: KalshiOrderRequest):
         raise HTTPException(status_code=400, detail="price_cents must be 1-99")
     if req.count < 1:
         raise HTTPException(status_code=400, detail="count must be ≥ 1")
+
+    # Dollar cost = contracts × price in dollars
+    cost_usd = round(req.count * req.price_cents / 100, 2)
+    if cost_usd < KALSHI_MIN_TRADE_USD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order too small: ${cost_usd:.2f} < ${KALSHI_MIN_TRADE_USD:.2f} minimum. "
+                   f"Increase count or price."
+        )
+    if cost_usd > KALSHI_MAX_TRADE_USD:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Order too large: ${cost_usd:.2f} > ${KALSHI_MAX_TRADE_USD:.2f} safety cap. "
+                   f"Max {int(KALSHI_MAX_TRADE_USD * 100 / req.price_cents)} contracts at {req.price_cents}¢."
+        )
+
     try:
         result = _kalshi.place_order(
             ticker=req.ticker,
@@ -1478,7 +1522,7 @@ async def kalshi_place_order(req: KalshiOrderRequest):
             price_cents=req.price_cents,
             order_type=req.order_type,
         )
-        return {"status": "submitted", "order": result}
+        return {"status": "submitted", "cost_usd": cost_usd, "order": result}
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
 
