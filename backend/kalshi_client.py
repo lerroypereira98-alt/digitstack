@@ -143,6 +143,24 @@ class KalshiClient:
     def cancel_order(self, order_id: str) -> Dict:
         return self._post(f"/portfolio/orders/{order_id}/cancel")
 
+    def sell_position(self, ticker: str, side: str, count: int) -> Dict:
+        """
+        Close/sell an existing position at market price.
+        side: the side you HOLD ("yes" or "no") — we sell that side back.
+        """
+        body = {
+            "ticker":          ticker,
+            "client_order_id": f"apex_sl_{int(time.time()*1000)}",
+            "type":            "market",
+            "action":          "sell",
+            "side":            side.lower(),
+            "count":           count,
+        }
+        return self._post("/portfolio/orders", body)
+
+    def get_order(self, order_id: str) -> Dict:
+        return self._get(f"/portfolio/orders/{order_id}").get("order", {})
+
     # ── Strategy helpers ──────────────────────────────────────────────────────
 
     def scan_btc_15min_signals(self) -> List[Dict]:

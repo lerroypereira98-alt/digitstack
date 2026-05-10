@@ -1080,17 +1080,23 @@ async def paper_reset():
 # ── Background paper engine tick (runs independently of WS connections) ───────
 
 @app.on_event("startup")
-async def start_paper_ticker():
+async def start_background_tasks():
+    global _monitor_active
+
+    # Paper trading tick loop
     async def _tick_loop():
         while True:
-            # Feed live market price path into models so they see real trend data
-            price_path = paper.market._path if paper.market else None
+            price_path  = paper.market._path if paper.market else None
             market_data = bot.generate_market_data(price_path=price_path)
-            trinity = bot.mirofish.get_consensus(market_data)
+            trinity     = bot.mirofish.get_consensus(market_data)
             bot.live_data['cycle'] += 1
             paper.tick(trinity=trinity)
             await asyncio.sleep(1)
     asyncio.create_task(_tick_loop())
+
+    # Kalshi live stop-loss monitor
+    _monitor_active = True
+    asyncio.create_task(_position_monitor())
 
 
 # ── Existing endpoints ────────────────────────────────────────────────────────
@@ -1368,6 +1374,80 @@ async def run_backtest(num_trades: int = 100, duration_min: int = 5):
 # KALSHI LIVE ENDPOINTS
 # ============================================================================
 
+KALSHI_MIN_TRADE_USD = 0.10
+KALSHI_MAX_TRADE_USD = 1.00
+KALSHI_RISK_PCT      = 0.05   # risk 5% of balance per trade
+STOP_LOSS_PCT        = 0.35   # close position if it loses 35% of entry value
+TAKE_PROFIT_PCT      = 0.80   # close early if we've captured 80% of max payout
+
+# Live position tracker — persists in memory while server runs
+# order_id → {ticker, side, count, entry_price, entry_usd, entry_time}
+_live_positions: Dict[str, Dict] = {}
+_stop_loss_log: List[Dict]       = []
+_monitor_active                  = False
+
+
+async def _position_monitor():
+    """
+    Background loop: every 30 s check all open positions against stop loss
+    and take profit. If triggered, sell at market and log the event.
+    """
+    global _monitor_active
+    print("[StopLoss] Monitor started — checking every 30 s")
+    while _monitor_active:
+        await asyncio.sleep(30)
+        if not KALSHI_AVAILABLE or not _live_positions:
+            continue
+
+        for order_id, pos in list(_live_positions.items()):
+            ticker = pos["ticker"]
+            try:
+                market = _kalshi.get_market(ticker)
+
+                # Market already resolved — remove from tracker
+                if market.get("status") in ("settled", "closed"):
+                    _live_positions.pop(order_id, None)
+                    continue
+
+                yes_bid = market.get("yes_bid", 50) / 100
+                yes_ask = market.get("yes_ask", 50) / 100
+                yes_mid = (yes_bid + yes_ask) / 2
+
+                current_price = yes_mid if pos["side"] == "yes" else (1.0 - yes_mid)
+                entry         = pos["entry_price"]
+                loss_pct      = (entry - current_price) / entry        # positive = losing
+                gain_pct      = (current_price - entry) / (1.0 - entry) if entry < 1 else 0
+
+                reason = None
+                if loss_pct >= STOP_LOSS_PCT:
+                    reason = f"STOP LOSS — lost {loss_pct:.0%} of entry (threshold {STOP_LOSS_PCT:.0%})"
+                elif gain_pct >= TAKE_PROFIT_PCT:
+                    reason = f"TAKE PROFIT — captured {gain_pct:.0%} of max payout"
+
+                if reason:
+                    print(f"[StopLoss] {ticker} {pos['side'].upper()} — {reason}, selling {pos['count']} contracts")
+                    try:
+                        _kalshi.sell_position(ticker, pos["side"], pos["count"])
+                    except Exception as sell_err:
+                        print(f"[StopLoss] Sell failed: {sell_err}")
+                    event = {
+                        "ticker":        ticker,
+                        "side":          pos["side"],
+                        "entry_price":   entry,
+                        "exit_price":    round(current_price, 3),
+                        "loss_pct":      round(loss_pct * 100, 1),
+                        "entry_usd":     pos["entry_usd"],
+                        "saved_usd":     round(current_price * pos["count"], 2),
+                        "net_loss_usd":  round((entry - current_price) * pos["count"], 2),
+                        "reason":        reason,
+                        "timestamp":     datetime.utcnow().isoformat(),
+                    }
+                    _stop_loss_log.append(event)
+                    _live_positions.pop(order_id, None)
+
+            except Exception as e:
+                print(f"[StopLoss] Monitor error for {ticker}: {e}")
+
 def _require_kalshi():
     if not KALSHI_AVAILABLE:
         raise HTTPException(status_code=503, detail="Kalshi client unavailable — check KALSHI_API_KEY and KALSHI_PRIVATE_KEY in .env")
@@ -1533,11 +1613,6 @@ async def kalshi_market_detail(ticker: str):
         raise HTTPException(status_code=502, detail=str(e))
 
 
-KALSHI_MIN_TRADE_USD = 0.10   # minimum $0.10 per order
-KALSHI_MAX_TRADE_USD = 1.00   # hard ceiling — never risk more than $1.00 per trade
-KALSHI_RISK_PCT      = 0.05   # risk 5% of current balance per trade
-
-
 class KalshiOrderRequest(BaseModel):
     ticker: str
     side: str          # "yes" or "no"
@@ -1584,9 +1659,48 @@ async def kalshi_place_order(req: KalshiOrderRequest):
             price_cents=req.price_cents,
             order_type=req.order_type,
         )
-        return {"status": "submitted", "cost_usd": cost_usd, "order": result}
+
+        # Register position for stop loss monitoring
+        order_id = result.get("order", {}).get("order_id") or result.get("order_id", f"local_{int(time.time()*1000)}")
+        _live_positions[order_id] = {
+            "ticker":       req.ticker,
+            "side":         req.side.lower(),
+            "count":        req.count,
+            "entry_price":  req.price_cents / 100,
+            "entry_usd":    cost_usd,
+            "entry_time":   datetime.utcnow().isoformat(),
+            "stop_at":      round(req.price_cents / 100 * (1 - STOP_LOSS_PCT), 3),
+        }
+        stop_price = round(req.price_cents / 100 * (1 - STOP_LOSS_PCT) * 100)
+        max_loss   = round(cost_usd * STOP_LOSS_PCT, 2)
+
+        return {
+            "status":       "submitted",
+            "cost_usd":     cost_usd,
+            "stop_loss": {
+                "triggers_at_price_cents": stop_price,
+                "max_loss_usd":            max_loss,
+                "saves_usd":               round(cost_usd - max_loss, 2),
+                "note":                    f"Auto-sell if price drops to {stop_price}¢ — lose max ${max_loss} not full ${cost_usd}"
+            },
+            "order":        result,
+        }
     except Exception as e:
         raise HTTPException(status_code=502, detail=str(e))
+
+
+@app.get("/api/kalshi/stop-loss/status")
+async def kalshi_stop_loss_status():
+    """Show all monitored positions and stop loss event history."""
+    return {
+        "monitor_active":   _monitor_active,
+        "open_positions":   list(_live_positions.values()),
+        "stop_loss_pct":    STOP_LOSS_PCT,
+        "take_profit_pct":  TAKE_PROFIT_PCT,
+        "events_fired":     len(_stop_loss_log),
+        "history":          _stop_loss_log[-20:],  # last 20 events
+        "total_saved_usd":  round(sum(e.get("saved_usd", 0) for e in _stop_loss_log), 2),
+    }
 
 
 @app.delete("/api/kalshi/order/{order_id}")
