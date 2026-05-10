@@ -1166,6 +1166,134 @@ class BacktestTrade:
             'reason':        self.signal.get('reason', ''),
         }
 
+@app.post("/api/backtest/kalshi")
+async def run_kalshi_backtest(num_trades: int = 100, duration_min: int = 15, trade_size: float = 50.0):
+    """
+    Realistic Kalshi simulation including:
+    - Bid-ask spread (2-6 cents on BTC 15-min markets, widens near resolution)
+    - Market order slippage (0.5-1.5% depending on size)
+    - Kalshi fee: 0% on wins (Kalshi charges no fee on winning trades)
+    - Rounded contract sizes (Kalshi fills in whole contracts)
+    - Liquidity reality: small orders ($10-200) fill easily, modelled at 100%
+    """
+    if num_trades < 10 or num_trades > 5000:
+        return {"error": f"num_trades must be 10-5000"}
+    if duration_min not in (5, 15):
+        return {"error": "duration_min must be 5 or 15"}
+
+    results = []
+    balance = 10000.0
+
+    for _ in range(num_trades):
+        path = SimulatedMarket(duration_min=duration_min, speed=1)._path
+        bt = BacktestTrade(path, duration_min=duration_min)
+
+        if not bt.signal["tradeable"]:
+            continue
+
+        # ── Kalshi-realistic market costs ─────────────────────────────────────
+
+        # 1. Bid-ask spread: widens near resolution and at extreme prices
+        #    Real Kalshi BTC 15-min spread: ~2-4¢ mid-market, ~4-8¢ in final 3 min
+        progress = bt.market_progress
+        base_spread = 0.03  # 3 cents typical
+        if progress >= 0.85:
+            spread = np.random.uniform(0.04, 0.09)   # wider near expiry
+        elif progress >= 0.73:
+            spread = np.random.uniform(0.02, 0.05)
+        else:
+            spread = base_spread
+
+        # 2. Slippage: market order fills worse than midpoint
+        #    Small orders ($10-200): ~0.5-1.5% slippage
+        size_usd = min(trade_size, balance * 0.05)
+        slippage = np.random.uniform(0.005, 0.015)   # 0.5-1.5%
+
+        # 3. Effective entry price (worse than quoted midpoint)
+        side = bt.signal["side"]
+        if side == "YES":
+            quoted_price  = float(np.clip(bt.current_price, 0.05, 0.95))
+            # Buy YES: you pay the ask (midpoint + half spread + slippage)
+            effective_price = min(quoted_price + spread / 2 + quoted_price * slippage, 0.97)
+        else:
+            quoted_price  = float(np.clip(1.0 - bt.current_price, 0.05, 0.95))
+            # Buy NO: you pay the ask (midpoint + half spread + slippage)
+            effective_price = min(quoted_price + spread / 2 + quoted_price * slippage, 0.97)
+
+        # 4. Kelly sizing on effective (worse) price
+        size = kelly_size(bt.signal["win_prob"], effective_price, balance)
+        size = min(size, size_usd, balance * 0.05)
+        if size < 5:
+            continue
+
+        # 5. Whole-contract rounding (Kalshi fills in $0.01 increments effectively,
+        #    but contract counts are rounded to nearest integer)
+        contracts = int(size / effective_price)
+        if contracts < 1:
+            continue
+        actual_size = round(contracts * effective_price, 2)
+
+        # 6. Resolution (same as clean backtest — price path determines outcome)
+        final_price = path[-1]
+        won = (side == "YES" and final_price > 0.5) or \
+              (side == "NO"  and final_price < 0.5)
+
+        # 7. Kalshi fees: 0% on winning contracts, 0% on losing (no fee structure)
+        #    Note: Kalshi does NOT charge fees on prediction market trades
+        if won:
+            pnl = round(contracts * (1.0 - effective_price), 2)   # win: get $1 per contract
+        else:
+            pnl = -actual_size   # lose: forfeit stake
+
+        balance = round(balance + pnl, 2)
+        results.append({
+            "side":            side,
+            "quoted_price":    round(quoted_price, 4),
+            "effective_price": round(effective_price, 4),
+            "spread_applied":  round(spread, 4),
+            "slippage_pct":    round(slippage * 100, 2),
+            "contracts":       contracts,
+            "size_usd":        actual_size,
+            "entry_progress":  f"{progress:.0%}",
+            "final_price":     round(final_price, 4),
+            "won":             won,
+            "pnl":             pnl,
+            "reason":          bt.signal.get("reason", ""),
+        })
+
+    if not results:
+        return {"error": "No tradeable signals", "num_attempts": num_trades, "trades_executed": 0}
+
+    wins  = [t for t in results if t["won"]]
+    pnls  = [t["pnl"] for t in results]
+    avg_spread    = round(np.mean([t["spread_applied"] for t in results]) * 100, 2)
+    avg_slippage  = round(np.mean([t["slippage_pct"] for t in results]), 2)
+    total_cost    = round(sum(
+        (t["effective_price"] - t["quoted_price"]) * t["contracts"] for t in results
+    ), 2)
+
+    return {
+        "mode":            "kalshi_realistic",
+        "duration_min":    duration_min,
+        "num_attempted":   num_trades,
+        "num_executed":    len(results),
+        "starting_balance": 10000,
+        "final_balance":   round(balance, 2),
+        "total_pnl":       round(sum(pnls), 2),
+        "win_rate":        round(len(wins) / len(results) * 100, 1),
+        "avg_trade_pnl":   round(np.mean(pnls), 2),
+        "best_trade":      round(max(pnls), 2),
+        "worst_trade":     round(min(pnls), 2),
+        "market_costs": {
+            "avg_spread_cents":  avg_spread,
+            "avg_slippage_pct":  avg_slippage,
+            "total_cost_drag":   total_cost,
+            "note": "Kalshi charges 0% fees on prediction market trades"
+        },
+        "trades": results[:50],
+    }
+
+
 @app.post("/api/backtest")
 async def run_backtest(num_trades: int = 100, duration_min: int = 5):
     """Run instant backtest without market delays. Reports aggregate stats."""
