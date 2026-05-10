@@ -936,6 +936,81 @@ async def health_check():
     return {"status": "running", "cycle": bot.live_data['cycle']}
 
 
+# ── Batch backtest (instant, no market delays) ────────────────────────────────
+
+class BacktestTrade:
+    def __init__(self, market_price_path):
+        self.price_path = market_price_path
+        self.market_data = {
+            'prices': market_price_path[-20:],
+            'volumes': (np.random.rand(20) * 1000).tolist(),
+            'bid_volume': float(np.random.rand() * 500),
+            'ask_volume': float(np.random.rand() * 500),
+            'time_to_expiry': 300,
+            'spread': float(np.random.rand() * 0.05)
+        }
+        self.trinity = bot.mirofish.get_consensus(self.market_data)
+        self.signal = interpret_signal(self.trinity)
+
+    def execute(self, balance):
+        if not self.signal['tradeable']:
+            return None
+        entry_price = 0.5 + np.random.uniform(-0.1, 0.1) if self.signal['side'] == 'YES' else 0.5 + np.random.uniform(-0.1, 0.1)
+        entry_price = np.clip(entry_price, 0.05, 0.95)
+        size = kelly_size(self.signal['win_prob'], entry_price, balance)
+        if size < 10:
+            return None
+        final_price = self.price_path[-1]
+        won = (self.signal['side'] == 'YES' and final_price > 0.5) or (self.signal['side'] == 'NO' and final_price < 0.5)
+        pnl = size * (1.0/entry_price - 1) if won else -size
+        return {
+            'side': self.signal['side'],
+            'entry_price': entry_price,
+            'final_price': final_price,
+            'size': size,
+            'pnl': pnl,
+            'won': won,
+            'outcome': 'YES' if final_price > 0.5 else 'NO',
+            'signal_strength': self.signal['signal_strength']
+        }
+
+@app.post("/api/backtest")
+async def run_backtest(num_trades: int = 100):
+    """Run instant backtest without market delays. Reports aggregate stats."""
+    if num_trades < 10 or num_trades > 5000:
+        return {"error": f"num_trades must be 10-5000 (got {num_trades})"}
+
+    results = []
+    balance = 10000
+
+    for i in range(num_trades):
+        path = SimulatedMarket(duration_min=5, speed=1)._path
+        bt = BacktestTrade(path)
+        trade = bt.execute(balance)
+        if trade:
+            balance += trade['pnl']
+            results.append(trade)
+
+    if not results:
+        return {"error": "No tradeable signals in backtest", "num_attempts": num_trades, "trades_executed": 0}
+
+    wins = [t for t in results if t['won']]
+    pnls = [t['pnl'] for t in results]
+
+    return {
+        "num_attempted": num_trades,
+        "num_executed": len(results),
+        "starting_balance": 10000,
+        "final_balance": round(balance, 2),
+        "total_pnl": round(sum(pnls), 2),
+        "win_rate": round(len(wins) / len(results) * 100, 1),
+        "avg_trade": round(np.mean(pnls), 2),
+        "best_trade": round(max(pnls), 2),
+        "worst_trade": round(min(pnls), 2),
+        "trades": results[:100]  # return first 100 for inspection
+    }
+
+
 # ============================================================================
 # MAIN EXECUTION
 # ============================================================================
