@@ -1453,7 +1453,7 @@ async def kalshi_signals():
             "cap_info": {
                 "min_usd": KALSHI_MIN_TRADE_USD,
                 "max_usd": KALSHI_MAX_TRADE_USD,
-                "note": "YES signals at 74c+ cost $0.74/contract — use NO signals (≤26c) for $0.50 cap"
+                "note": "YES signals at 70-90c cost $0.70-$0.90/contract — $1.00 cap allows 1 contract"
             }
         }
     except Exception as e:
@@ -1473,7 +1473,7 @@ async def kalshi_market_detail(ticker: str):
 
 
 KALSHI_MIN_TRADE_USD = 0.10   # minimum $0.10 per order
-KALSHI_MAX_TRADE_USD = 0.50   # maximum $0.50 per order — safety cap for live testing
+KALSHI_MAX_TRADE_USD = 1.00   # maximum $1.00 per order — safety cap for live testing
 
 
 class KalshiOrderRequest(BaseModel):
