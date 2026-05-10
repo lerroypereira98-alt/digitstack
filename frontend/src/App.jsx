@@ -313,19 +313,44 @@ function Countdown({ timeLeftMin }) {
 
 // ── Paper Trading Panel ───────────────────────────────────────────────────────
 const STRATEGIES = ['MiroFish Consensus','Temporal Arbitrage','Copy Trading','Kelly Only','Manual'];
-const DURATIONS  = [5, 10, 15];
 const SPEEDS     = [1, 10, 100];
 
-function PaperPanel({ paper, onClose }) {
+function PaperPanel({ onClose }) {
   const [side,      setSide]     = useState('YES');
   const [sizeUsd,   setSizeUsd]  = useState('500');
   const [strategy,  setStrategy] = useState('MiroFish Consensus');
-  const [duration,  setDuration] = useState(5);   // BTC 5min or 15min only
+  const [duration,  setDuration] = useState(5);
   const [speed,     setSpeed]    = useState(10);
   const [queueCount,setQueue]    = useState(1);
   const [busy,      setBusy]     = useState(false);
   const [msg,       setMsg]      = useState('');
-  const [autoOn,    setAutoOn]   = useState(paper?.auto_trade ?? false);
+  const [autoOn,    setAutoOn]   = useState(false);
+  const [paper,     setPaper]    = useState(null);
+  const prevHistLen = useRef(0);
+  const [newTrade,  setNewTrade] = useState(false);
+
+  // Independent polling — doesn't rely on WebSocket
+  useEffect(() => {
+    const poll = async () => {
+      try {
+        const r = await fetch('http://localhost:8000/api/paper/snapshot');
+        if (r.ok) {
+          const d = await r.json();
+          setPaper(d);
+          setAutoOn(d.auto_trade ?? false);
+          const len = d.history?.length ?? 0;
+          if (len > prevHistLen.current) {
+            setNewTrade(true);
+            setTimeout(() => setNewTrade(false), 800);
+            prevHistLen.current = len;
+          }
+        }
+      } catch {}
+    };
+    poll();
+    const id = setInterval(poll, 1000);
+    return () => clearInterval(id);
+  }, []);
 
   const notify = (m) => { setMsg(m); setTimeout(()=>setMsg(''),3500); };
 
@@ -567,60 +592,60 @@ function PaperPanel({ paper, onClose }) {
           {/* ── RIGHT: live trades table ── */}
           <div className="pp-right-col">
 
-            {/* open positions */}
-            <div className="panel-label">OPEN POSITIONS ({positions.length})</div>
-            {positions.length === 0
-              ? <div className="pp-empty">No open positions — start a market &amp; trade</div>
-              : <>
-                  <div className="trades-table-hdr">
-                    <span>SIDE</span><span>ENTRY</span><span>NOW</span>
-                    <span>SIZE</span><span>PNL</span><span>STRATEGY</span><span></span>
+            {/* open positions — compact */}
+            {positions.length > 0 && (
+              <div className="pp-open-positions">
+                <div className="open-pos-hdr">
+                  <span>SIDE</span><span>ENTRY</span><span>SIZE</span><span>STRATEGY</span><span></span>
+                </div>
+                {positions.map(p=>(
+                  <div className="open-pos-row" key={p.id}>
+                    <span className={p.side==='YES'?'positive':'negative'}>{p.side}</span>
+                    <span>{(p.entry_price*100).toFixed(1)}¢</span>
+                    <span>${p.size_usd}</span>
+                    <span className="trades-strat">{p.strategy.split(' ')[0]}</span>
+                    <button className="pp-close-pos" onClick={()=>closeTrade(p.id)}>EXIT</button>
                   </div>
-                  {positions.map(p=>(
-                    <div className="trades-row" key={p.id}>
-                      <span className={p.side==='YES'?'positive':'negative'}>{p.side}</span>
-                      <span>{(p.entry_price*100).toFixed(1)}¢</span>
-                      <span>{((p.current_price||p.entry_price)*100).toFixed(1)}¢</span>
-                      <span>${p.size_usd}</span>
-                      <span className={p.pnl>=0?'positive':'negative'}>
-                        {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
-                      </span>
-                      <span className="trades-strat">{p.strategy.split(' ')[0]}</span>
-                      <button className="pp-close-pos" onClick={()=>closeTrade(p.id)}>EXIT</button>
-                    </div>
-                  ))}
-                  <div className="pp-pos-mkt-note">
-                    {positions[0]?.market_name}
-                  </div>
-                </>
-            }
+                ))}
+              </div>
+            )}
 
             {/* all trades history */}
-            <div className="panel-label" style={{marginTop:8}}>
-              ALL TRADES ({paper?.history?.length??0}) &nbsp;
-              <span className={`wr-tag ${wr>=50?'positive':'negative'}`}>{wr}% WIN RATE</span>
+            <div className={`trades-section-hdr ${newTrade ? 'trades-flash' : ''}`}>
+              <span>TRADE HISTORY</span>
+              <span className="trades-count">{paper?.history?.length ?? 0}</span>
+              {(paper?.history?.length ?? 0) > 0 &&
+                <span className={`wr-tag ${wr>=50?'positive':'negative'}`}>{wr}% WIN RATE</span>
+              }
             </div>
             {history.length === 0
-              ? <div className="pp-empty">No closed trades yet</div>
-              : <>
-                  <div className="trades-table-hdr">
-                    <span>SIDE</span><span>ENTRY</span><span>EXIT</span>
-                    <span>SIZE</span><span>OUT</span><span>PNL</span><span>STRATEGY</span>
+              ? <div className="pp-empty-trades">
+                  <div className="pp-empty-icon">▷</div>
+                  <div>No trades yet</div>
+                  <div style={{fontSize:'9px',color:'#3a3a3a',marginTop:4}}>Start a market → enable AUTO-TRADER</div>
+                </div>
+              : <div className="trades-scroll">
+                  <div className="hist-hdr">
+                    <span>#</span><span>SIDE</span><span>ENTRY</span>
+                    <span>SIZE</span><span>OUT</span><span>PNL</span>
                   </div>
-                  {history.map(p=>(
-                    <div className={`trades-row ${p.pnl>=0?'tr-win':'tr-loss'}`} key={p.id}>
-                      <span className={p.side==='YES'?'positive':'negative'}>{p.side}</span>
-                      <span>{(p.entry_price*100).toFixed(1)}¢</span>
-                      <span>{(p.exit_price*100).toFixed(1)}¢</span>
-                      <span>${p.size_usd}</span>
-                      <span className={p.outcome==='YES'?'positive':'negative'}>{p.outcome??'—'}</span>
-                      <span className={p.pnl>=0?'positive':'negative'}>
-                        {p.pnl>=0?'+':''}${p.pnl?.toFixed(2)}
-                      </span>
-                      <span className="trades-strat">{p.strategy.split(' ')[0]}</span>
-                    </div>
-                  ))}
-                </>
+                  {history.map(p=>{
+                    const pnl = p.pnl ?? 0;
+                    const won = pnl >= 0;
+                    return (
+                      <div className={`hist-row ${won ? 'hr-win' : 'hr-loss'}`} key={p.id}>
+                        <span className="hr-id">#{p.id}</span>
+                        <span className={p.side==='YES'?'positive':'negative'}>{p.side}</span>
+                        <span className="hr-price">{(p.entry_price*100).toFixed(1)}¢</span>
+                        <span className="hr-size">${p.size_usd}</span>
+                        <span className={p.outcome==='YES'?'positive':'negative'}>{p.outcome??'—'}</span>
+                        <span className={`hr-pnl ${won?'positive':'negative'}`}>
+                          {won?'+':''}{pnl.toFixed(2)}
+                        </span>
+                      </div>
+                    );
+                  })}
+                </div>
             }
           </div>
         </div>
@@ -939,7 +964,7 @@ export default function App() {
       {toast && <Toast msg={toast} onDone={()=>setToast('')}/>}
 
       {/* ── Paper Trading Panel ── */}
-      {paperOpen && <PaperPanel paper={data?.paper} onClose={()=>setPaperOpen(false)}/>}
+      {paperOpen && <PaperPanel onClose={()=>setPaperOpen(false)}/>}
     </div>
   );
 }
