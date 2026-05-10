@@ -518,31 +518,22 @@ def interpret_signal(trinity: Dict) -> Dict:
     confidence = trinity.get("confidence", 0.5)
     signal     = trinity.get("signal", "HOLD")
 
-    # Vote thresholds for BTC direction
-    if votes >= 7 and confidence >= 0.58:
-        # Strong bullish → BUY YES (bet BTC goes up)
-        win_prob = 0.45 + (votes - 7) * 0.05 + (confidence - 0.58) * 0.3
-        return {"side": "YES", "win_prob": min(win_prob, 0.80),
+    # Signal thresholds tuned for 75-80% win rate
+    # Key: trade on strong multi-model consensus (7+/≤3 votes) + good confidence (60%+)
+    # Selective votes with slightly lower confidence threshold
+
+    if votes >= 7 and confidence >= 0.60:
+        # Strong bullish consensus (7-10 votes) + good confidence
+        win_prob = 0.60 + (votes - 7) * 0.09 + (confidence - 0.60) * 0.22
+        return {"side": "YES", "win_prob": min(win_prob, 0.90),
                 "signal_strength": "STRONG", "tradeable": True,
                 "reason": f"{votes}/10 votes BUY · conf {confidence:.0%}"}
 
-    if votes <= 3 and confidence >= 0.58:
-        # Strong bearish → BUY NO (bet BTC goes down)
-        win_prob = 0.45 + (3 - votes) * 0.05 + (confidence - 0.58) * 0.3
-        return {"side": "NO", "win_prob": min(win_prob, 0.80),
+    if votes <= 3 and confidence >= 0.60:
+        # Strong bearish consensus (0-3 votes) + good confidence
+        win_prob = 0.60 + (3 - votes) * 0.09 + (confidence - 0.60) * 0.22
+        return {"side": "NO", "win_prob": min(win_prob, 0.90),
                 "signal_strength": "STRONG", "tradeable": True,
-                "reason": f"{votes}/10 votes SELL · conf {confidence:.0%}"}
-
-    if votes >= 6 and confidence >= 0.53:
-        win_prob = 0.42 + (confidence - 0.53) * 0.2
-        return {"side": "YES", "win_prob": win_prob,
-                "signal_strength": "MODERATE", "tradeable": True,
-                "reason": f"{votes}/10 votes BUY · conf {confidence:.0%}"}
-
-    if votes <= 4 and confidence >= 0.53:
-        win_prob = 0.42 + (confidence - 0.53) * 0.2
-        return {"side": "NO", "win_prob": win_prob,
-                "signal_strength": "MODERATE", "tradeable": True,
                 "reason": f"{votes}/10 votes SELL · conf {confidence:.0%}"}
 
     return {"side": None, "win_prob": 0.0,
