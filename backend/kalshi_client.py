@@ -15,7 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-KALSHI_BASE_URL  = os.getenv("KALSHI_BASE_URL", "https://trading-api.kalshi.com/trade-api/v2")
+KALSHI_BASE_URL  = os.getenv("KALSHI_BASE_URL", "https://api.elections.kalshi.com/trade-api/v2")
 KALSHI_API_KEY   = os.getenv("KALSHI_API_KEY", "")
 KALSHI_PEM       = os.getenv("KALSHI_PRIVATE_KEY", "")        # raw PEM content
 KALSHI_PEM_PATH  = os.getenv("KALSHI_PRIVATE_KEY_PATH", "")   # OR path to .pem file
