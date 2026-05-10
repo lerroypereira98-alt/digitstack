@@ -1,148 +1,194 @@
 """
-Weather Market Backtester
-Uses NOAA historical accuracy statistics (published by NWS verification program)
-to simulate 1000 trades and measure win rate of the NOAA arbitrage strategy.
+Weather Market Backtester — Research-calibrated simulation
 
-Key empirical facts from NWS verification data:
-  - When NOAA says 80% PoP, it rains 80% of the time (well-calibrated)
-  - Kalshi weather markets typically price 10-18% BELOW NOAA probability
-  - Temperature forecasts 2hr out are accurate to ±1.8°F (vs ±5°F at 24hr)
-  - The arbitrage: buy when NOAA says X% but market prices at X-12%
+Empirical facts used (from NWS verification program + leaderboard research):
+  - NOAA temperature forecasts are well-calibrated: 80% forecast = 80% accuracy
+  - Temperature uncertainty: ±5F at 24hr, ±1.8F at 2hr, ±0.5F at 30min
+  - Kalshi markets price 10-18% BELOW true probability on high-confidence events
+  - Kalshi markets overprice uncertainty by 1.27x (center buckets underpriced)
+  - Minimum viable price: $0.15 (fee drag kills edge below this)
+  - Minimum edge threshold: 8% (standard across all documented profitable bots)
+  - Temperature markets: higher win rate than rain (more predictable, more liquid)
+  - Secondary cities (ATL, DAL, AUS): wider spreads due to less bot competition
+
+Sources: WeatherEdge bot (81% WR), Kalshi-Go (81.8% WR), ColdMath ($300->$219K),
+         NWS verification reports, academic paper on Kalshi prediction markets
 """
 
-import numpy as np
+import math
 import random
-from typing import Dict, List, Tuple
+import numpy as np
+from typing import Dict, List, Optional
 
 random.seed(42)
 np.random.seed(42)
 
 
-# ── Market mispricing model (reverse-engineered from leaderboard analysis) ─────
-# Top traders exploit this: market consistently underprices NOAA high-confidence events
-# Market price = NOAA_prob - discount, where discount follows this distribution:
-MARKET_DISCOUNT_MEAN = 0.12   # market is 12% cheaper than NOAA on average
-MARKET_DISCOUNT_STD  = 0.05   # varies ±5%
+def _norm_cdf(z: float) -> float:
+    return 0.5 * (1 + math.erf(z / math.sqrt(2)))
 
-# NOAA accuracy by probability bucket (from NWS verification reports)
-NOAA_ACCURACY = {
-    # stated_prob → actual_hit_rate (NOAA is very well calibrated)
-    (90, 100): 0.93,
-    (80, 90):  0.85,
-    (70, 80):  0.76,
-    (60, 70):  0.65,
-    (50, 60):  0.55,
-    (20, 50):  0.35,
-    (10, 20):  0.15,
-    (0,  10):  0.05,
+
+# Market discount model (how much market underprices NOAA)
+# Research shows 10-18% discount on average, wider on secondary cities
+MARKET_DISCOUNT = {
+    "primary":   {"mean": 0.12, "std": 0.04},  # NYC, CHI, LA
+    "secondary": {"mean": 0.16, "std": 0.05},  # ATL, DAL, AUS — wider spreads
 }
 
-def noaa_hit_rate(pop: float) -> float:
-    for (lo, hi), rate in NOAA_ACCURACY.items():
-        if lo <= pop <= hi:
-            return rate
-    return pop / 100
+# NOAA temperature forecast accuracy by hours ahead (from NWS verification)
+TEMP_STD_BY_HOURS = {
+    0.5:  0.5,
+    1.0:  0.8,
+    2.0:  1.8,
+    3.0:  2.5,
+    4.0:  3.2,
+    6.0:  3.8,
+    12.0: 4.5,
+    24.0: 5.0,
+}
+
+def temp_std(hours: float) -> float:
+    """Interpolate forecast std dev from hours to resolution."""
+    keys = sorted(TEMP_STD_BY_HOURS.keys())
+    for i, k in enumerate(keys):
+        if hours <= k:
+            if i == 0:
+                return TEMP_STD_BY_HOURS[k]
+            lo, hi = keys[i-1], k
+            frac = (hours - lo) / (hi - lo)
+            return TEMP_STD_BY_HOURS[lo] + frac * (TEMP_STD_BY_HOURS[hi] - TEMP_STD_BY_HOURS[lo])
+    return TEMP_STD_BY_HOURS[24.0]
 
 
-def simulate_weather_trade(
-    noaa_pop: float,
+def simulate_temperature_trade(
     hours_to_resolution: float,
+    city_type: str = "primary",
+    min_edge: float = 0.08,
+    min_price: float = 0.15,
     trade_size_usd: float = 50.0,
-    min_edge_pct: float = 0.10,
-    min_noaa_confidence: float = 0.72,
-) -> Dict:
-    """Simulate one weather market trade using NOAA arbitrage strategy."""
+    tier: str = "all",
+    locked_in_prob: float = 0.15,  # 15% of plays have observed high locked in
+) -> Optional[Dict]:
+    """
+    Simulate one temperature market trade.
+    Models: NOAA forecast vs market price arbitrage + locked-in plays.
+    """
+    # Generate a random forecast scenario
+    # True temperature drawn from a distribution
+    true_temp   = random.normalvariate(75, 15)
+    strike_temp = true_temp + random.normalvariate(0, 8)  # strike near true temp
+    direction   = "above" if random.random() > 0.5 else "below"
 
-    # Market price (what you actually pay)
-    discount = np.random.normal(MARKET_DISCOUNT_MEAN, MARKET_DISCOUNT_STD)
-    discount = np.clip(discount, 0.03, 0.22)
+    std = temp_std(hours_to_resolution)
 
-    if noaa_pop >= 50:
-        # YES trade: NOAA says likely rain/high temp
-        true_prob    = noaa_hit_rate(noaa_pop)
-        market_price = (noaa_pop / 100) - discount
-        market_price = np.clip(market_price, 0.05, 0.95)
-        side         = "YES"
-    else:
-        # NO trade: NOAA says unlikely rain/low temp
-        no_pop       = 100 - noaa_pop
-        true_prob    = noaa_hit_rate(no_pop)
-        market_price = (no_pop / 100) - discount
-        market_price = np.clip(market_price, 0.05, 0.95)
-        side         = "NO"
+    # True probability (what will actually happen)
+    z_true = (true_temp - strike_temp) / 1.0  # std=1 at resolution
+    true_prob = _norm_cdf(z_true) if direction == "above" else 1 - _norm_cdf(z_true)
 
-    # Edge = true probability - market price
-    edge = true_prob - market_price
-    if edge < min_edge_pct:
-        return None   # not enough edge
-    if true_prob < min_noaa_confidence:
-        return None   # NOAA not confident enough
+    # NOAA forecast probability (well-calibrated, slight noise)
+    noaa_noise = random.normalvariate(0, 0.5)  # ±0.5F NOAA forecast error
+    noaa_temp  = true_temp + noaa_noise
+    z_noaa     = (noaa_temp - strike_temp) / std
+    noaa_prob  = _norm_cdf(z_noaa) if direction == "above" else 1 - _norm_cdf(z_noaa)
 
-    # Time bonus: closer to resolution = tighter uncertainty = higher true win rate
-    time_bonus = max(0, (4 - hours_to_resolution) / 4 * 0.05)
-    adjusted_win_prob = min(true_prob + time_bonus, 0.97)
+    # Locked-in play: today's high already observed
+    is_locked = random.random() < locked_in_prob and hours_to_resolution <= 4
+    if is_locked and direction == "above" and true_temp > strike_temp:
+        noaa_prob = 0.96
+        true_prob = 0.97
+
+    # Market price (underprices NOAA per research)
+    disc_params = MARKET_DISCOUNT.get(city_type, MARKET_DISCOUNT["primary"])
+    discount    = np.random.normal(disc_params["mean"], disc_params["std"])
+    discount    = np.clip(discount, 0.04, 0.25)
+
+    market_price = noaa_prob - discount
+    market_price = np.clip(market_price, 0.05, 0.95)
+
+    # Apply Kalshi 1.27x uncertainty overpricing correction (center buckets underpriced)
+    # This makes center buckets slightly more underpriced than our discount already captures
+    if 0.35 < market_price < 0.65:
+        market_price *= 0.92  # center buckets underpriced by additional ~8%
+
+    # Apply filters
+    if market_price < min_price:
+        return None
+    edge = noaa_prob - market_price
+    if edge < min_edge:
+        return None
+    if noaa_prob < 0.72:
+        return None
+
+    # Tier filter
+    tier_ranges = {"A": (0.72, 0.82), "B": (0.82, 0.90), "C": (0.90, 1.0), "all": (0.72, 1.0)}
+    lo, hi = tier_ranges.get(tier, (0.72, 1.0))
+    if not (lo <= noaa_prob <= hi):
+        return None
+
+    # Time bonus (convergence near resolution)
+    win_prob = min(noaa_prob + max(0, (6 - hours_to_resolution) / 6 * 0.04), 0.97)
 
     # Simulate outcome
-    won = random.random() < adjusted_win_prob
+    won = random.random() < true_prob
 
-    # P&L calculation (Kalshi: win pays $1 per contract, cost = market_price)
-    contracts  = max(1, int(trade_size_usd / market_price))
-    cost       = round(contracts * market_price, 2)
-    payout     = round(contracts * 1.0, 2) if won else 0.0
-    pnl        = round(payout - cost, 2)
+    contracts = max(1, int(trade_size_usd / market_price))
+    cost      = round(contracts * market_price, 2)
+    payout    = round(contracts * 1.0, 2) if won else 0.0
+    pnl       = round(payout - cost, 2)
+    tier_label = "C" if noaa_prob >= 0.90 else "B" if noaa_prob >= 0.82 else "A"
 
     return {
-        "side":          side,
-        "noaa_pop":      round(noaa_pop, 1),
-        "market_price":  round(market_price, 3),
-        "true_prob":     round(adjusted_win_prob, 3),
-        "edge":          round(edge, 3),
-        "hours_to_res":  round(hours_to_resolution, 1),
-        "contracts":     contracts,
-        "cost":          cost,
-        "pnl":           pnl,
-        "won":           won,
+        "market_type":  "TEMPERATURE",
+        "city_type":    city_type,
+        "direction":    direction,
+        "true_temp":    round(true_temp, 1),
+        "strike_temp":  round(strike_temp, 1),
+        "noaa_prob":    round(noaa_prob, 3),
+        "market_price": round(market_price, 3),
+        "edge":         round(edge, 3),
+        "win_prob":     round(win_prob, 3),
+        "hours_to_res": round(hours_to_resolution, 1),
+        "locked_in":    is_locked,
+        "tier":         tier_label,
+        "contracts":    contracts,
+        "cost":         cost,
+        "pnl":          pnl,
+        "won":          won,
     }
 
 
 def run_weather_backtest(
     num_trades: int = 1000,
     trade_size_usd: float = 50.0,
-    min_edge_pct: float = 0.10,
-    min_noaa_confidence: float = 0.72,
-    tier: str = "all",  # "A"=72-82%, "B"=82-90%, "C"=90%+, "all"
+    tier: str = "all",
+    city_mix: str = "mixed",  # "primary", "secondary", "mixed"
 ) -> Dict:
     """
-    Run full weather market backtest.
-    Simulates NOAA arbitrage strategy across 1000 markets.
+    Full weather backtest: temperature-primary strategy.
+    Uses research-calibrated parameters from documented profitable bots.
     """
     results   = []
     attempted = 0
     balance   = 10000.0
 
-    # Tier confidence ranges
-    tier_ranges = {
-        "A":   (72, 82),
-        "B":   (82, 90),
-        "C":   (90, 100),
-        "all": (65, 100),
-    }
-    pop_lo, pop_hi = tier_ranges.get(tier, (65, 100))
-
-    while len(results) < num_trades and attempted < num_trades * 5:
+    while len(results) < num_trades and attempted < num_trades * 8:
         attempted += 1
 
-        # Simulate a market: random NOAA confidence in tier range
-        noaa_pop = random.uniform(pop_lo, pop_hi)
-        # Simulate time to resolution: 0.5 - 4 hours (our entry window)
-        hours_to_res = random.uniform(0.5, 4.0)
+        # City type mix
+        if city_mix == "primary":
+            city_type = "primary"
+        elif city_mix == "secondary":
+            city_type = "secondary"
+        else:
+            city_type = random.choice(["primary", "primary", "secondary"])  # 2:1 mix
 
-        trade = simulate_weather_trade(
-            noaa_pop=noaa_pop,
-            hours_to_resolution=hours_to_res,
+        hours = random.uniform(0.5, 6.0)
+
+        trade = simulate_temperature_trade(
+            hours_to_resolution=hours,
+            city_type=city_type,
             trade_size_usd=trade_size_usd,
-            min_edge_pct=min_edge_pct,
-            min_noaa_confidence=min_noaa_confidence,
+            tier=tier,
         )
         if trade:
             balance += trade["pnl"]
@@ -152,32 +198,52 @@ def run_weather_backtest(
     if not results:
         return {"error": "No qualifying signals in simulation"}
 
-    wins     = [t for t in results if t["won"]]
-    pnls     = [t["pnl"] for t in results]
-    avg_edge = round(np.mean([t["edge"] for t in results]), 3)
-    avg_hrs  = round(np.mean([t["hours_to_res"] for t in results]), 1)
+    wins        = [t for t in results if t["won"]]
+    pnls        = [t["pnl"] for t in results]
+    locked_wins = [t for t in results if t["locked_in"] and t["won"]]
+    locked_all  = [t for t in results if t["locked_in"]]
+    tier_stats  = {}
+    for tl in ["A", "B", "C"]:
+        tt = [t for t in results if t["tier"] == tl]
+        tw = [t for t in tt if t["won"]]
+        if tt:
+            tier_stats[f"Tier{tl}"] = {
+                "trades": len(tt),
+                "win_rate": round(len(tw)/len(tt)*100, 1),
+                "avg_pnl": round(sum(t["pnl"] for t in tt)/len(tt), 2),
+            }
 
     return {
-        "tier":             tier,
-        "num_attempted":    attempted,
-        "num_executed":     len(results),
-        "starting_balance": 10000,
-        "final_balance":    round(balance, 2),
-        "total_pnl":        round(sum(pnls), 2),
-        "win_rate":         round(len(wins) / len(results) * 100, 1),
-        "avg_trade_pnl":    round(np.mean(pnls), 2),
-        "best_trade":       round(max(pnls), 2),
-        "worst_trade":      round(min(pnls), 2),
-        "avg_edge_pct":     round(avg_edge * 100, 1),
-        "avg_hours_to_res": avg_hrs,
-        "strategy":         "NOAA PoP arbitrage — buy when market underprices NOAA by 10%+",
-        "trades":           results[:50],
+        "strategy":          "Temperature arbitrage: NOAA probability vs market price",
+        "tier":              tier,
+        "city_mix":          city_mix,
+        "num_attempted":     attempted,
+        "num_executed":      len(results),
+        "starting_balance":  10000,
+        "final_balance":     round(balance, 2),
+        "total_pnl":         round(sum(pnls), 2),
+        "win_rate":          round(len(wins) / len(results) * 100, 1),
+        "avg_trade_pnl":     round(np.mean(pnls), 2),
+        "best_trade":        round(max(pnls), 2),
+        "worst_trade":       round(min(pnls), 2),
+        "avg_edge_pct":      round(np.mean([t["edge"] for t in results]) * 100, 1),
+        "locked_in_wr":      round(len(locked_wins)/len(locked_all)*100, 1) if locked_all else None,
+        "locked_in_trades":  len(locked_all),
+        "tier_breakdown":    tier_stats,
+        "min_price_filter":  0.15,
+        "min_edge_filter":   "8%",
+        "trades":            results[:50],
     }
 
 
-# Quick self-test
 if __name__ == "__main__":
-    print("Running 1000-trade weather backtest...")
+    print("Weather Backtest — Temperature Arbitrage Strategy")
+    print("=" * 60)
     for t in ["A", "B", "C", "all"]:
         r = run_weather_backtest(num_trades=1000, tier=t)
-        print(f"Tier{t}: {r['win_rate']}% WR | PnL: ${r['total_pnl']:,.2f} | Edge: {r['avg_edge_pct']}% | Trades: {r['num_executed']}")
+        print(f"Tier{t:3}: {r['win_rate']:5.1f}% WR | PnL ${r['total_pnl']:>10,.2f} | "
+              f"Edge {r['avg_edge_pct']}% | Locked-in WR: {r.get('locked_in_wr','N/A')}%")
+    print()
+    print("Secondary cities (less bot competition):")
+    r2 = run_weather_backtest(num_trades=1000, tier="all", city_mix="secondary")
+    print(f"Secondary: {r2['win_rate']}% WR | PnL ${r2['total_pnl']:,.2f} | Edge {r2['avg_edge_pct']}%")
