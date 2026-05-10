@@ -736,7 +736,8 @@ class PaperAccount:
         # auto-trader state
         self.auto_trade: bool = False
         self.auto_log:   List[Dict] = []
-        self._traded_market_ids: set = set()
+        self._market_trade_count: Dict[int, int] = {}  # market_id → trades placed
+        self.max_trades_per_market: int = 3            # max entries per market
         # risk management
         self.stop_loss_pct = stop_loss_pct  # e.g. 0.10 = close if down 10%
 
@@ -766,11 +767,17 @@ class PaperAccount:
                 dur, spd = self.queue.pop(0)
                 self.start_market(dur, spd)
 
-        # Auto-trader: fire once per market if enabled and signal is good
+        # Auto-trader: allow up to max_trades_per_market entries per market
         if (self.auto_trade and trinity and self.market
-                and not self.market.resolved
-                and self.market.market_id not in self._traded_market_ids):
-            self._auto_trade(trinity)
+                and not self.market.resolved):
+            mid = self.market.market_id
+            trades_so_far = self._market_trade_count.get(mid, 0)
+            has_open_pos = any(
+                p["market_id"] == mid and p.get("status", "open") == "open"
+                for p in self.positions
+            )
+            if trades_so_far < self.max_trades_per_market and not has_open_pos:
+                self._auto_trade(trinity)
 
     def _auto_trade(self, trinity: Dict):
         # Price-confirmed signal: combine MiroFish votes with current market price
@@ -793,10 +800,12 @@ class PaperAccount:
             self._log_auto(f"ERROR — {result['error']}")
             return
 
-        self._traded_market_ids.add(self.market.market_id)
+        mid = self.market.market_id
+        self._market_trade_count[mid] = self._market_trade_count.get(mid, 0) + 1
+        count = self._market_trade_count[mid]
         self._log_auto(
-            f"TRADE — {sig['side']} ${size:.2f} @ {entry_price*100:.1f}¢ "
-            f"| {sig['signal_strength']} signal | {sig['reason']} | {timing['reason']}"
+            f"TRADE #{count} — {sig['side']} ${size:.2f} @ {entry_price*100:.1f}¢ "
+            f"| {sig['signal_strength']} | {sig['reason']} | progress {progress:.0%}"
         )
 
     def _log_auto(self, msg: str):
