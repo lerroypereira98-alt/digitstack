@@ -1460,6 +1460,67 @@ async def kalshi_signals():
         raise HTTPException(status_code=502, detail=str(e))
 
 
+@app.get("/api/kalshi/auto-signal")
+async def kalshi_auto_signal():
+    """
+    Scan for the best live signal AND size the trade based on current balance.
+    Uses 5% of balance per trade, capped at $1.00 hard ceiling.
+    Returns a ready-to-fire order — just POST it to /api/kalshi/order.
+    """
+    _require_kalshi()
+    try:
+        # 1. Get live balance
+        balance_data  = _kalshi.get_balance()
+        balance_cents = balance_data.get("balance", 0)
+        balance_usd   = balance_cents / 100
+
+        # 2. Scan for signals
+        signals = _kalshi.scan_btc_15min_signals()
+        if not signals:
+            return {
+                "signal": None,
+                "balance_usd": round(balance_usd, 2),
+                "message": "No signals right now — check again in 1-2 minutes"
+            }
+
+        best = signals[0]
+        entry_cents = round(best["entry_price"] * 100)
+
+        # 3. Size trade: 5% of balance, capped at $1.00, floored at $0.10
+        risk_budget = min(balance_usd * KALSHI_RISK_PCT, KALSHI_MAX_TRADE_USD)
+        risk_budget = max(risk_budget, KALSHI_MIN_TRADE_USD)
+
+        # How many whole contracts fit in the risk budget?
+        contracts = max(1, int(risk_budget * 100 / entry_cents)) if entry_cents > 0 else 1
+        actual_cost = round(contracts * entry_cents / 100, 2)
+
+        # If even 1 contract exceeds budget, flag it but still return the signal
+        within_budget = actual_cost <= round(balance_usd * KALSHI_RISK_PCT, 2) * 1.2  # 20% tolerance
+
+        trades_remaining = int(balance_usd / actual_cost) if actual_cost > 0 else 0
+
+        return {
+            "balance_usd":       round(balance_usd, 2),
+            "risk_per_trade_usd": round(risk_budget, 2),
+            "signal":            best,
+            "order": {
+                "ticker":      best["ticker"],
+                "side":        best["side"].lower(),
+                "count":       contracts,
+                "price_cents": entry_cents,
+                "cost_usd":    actual_cost,
+            },
+            "bankroll": {
+                "trades_remaining_at_this_size": trades_remaining,
+                "pct_of_balance":   round(actual_cost / balance_usd * 100, 1) if balance_usd > 0 else 0,
+                "within_5pct_rule": within_budget,
+            },
+            "note": "POST the 'order' object to /api/kalshi/order to execute"
+        }
+    except Exception as e:
+        raise HTTPException(status_code=502, detail=str(e))
+
+
 @app.get("/api/kalshi/market/{ticker}")
 async def kalshi_market_detail(ticker: str):
     """Get details + orderbook for a specific market."""
@@ -1473,7 +1534,8 @@ async def kalshi_market_detail(ticker: str):
 
 
 KALSHI_MIN_TRADE_USD = 0.10   # minimum $0.10 per order
-KALSHI_MAX_TRADE_USD = 1.00   # maximum $1.00 per order — safety cap for live testing
+KALSHI_MAX_TRADE_USD = 1.00   # hard ceiling — never risk more than $1.00 per trade
+KALSHI_RISK_PCT      = 0.05   # risk 5% of current balance per trade
 
 
 class KalshiOrderRequest(BaseModel):
