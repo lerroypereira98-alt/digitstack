@@ -6,7 +6,6 @@ Handles RSA-signed authentication and all endpoints needed for live BTC trading.
 import os
 import time
 import base64
-import hashlib
 import requests
 from typing import Dict, List, Optional
 from cryptography.hazmat.primitives import hashes, serialization
@@ -16,17 +15,18 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-KALSHI_BASE_URL = os.getenv("KALSHI_BASE_URL", "https://trading-api.kalshi.com/trade-api/v2")
-KALSHI_API_KEY  = os.getenv("KALSHI_API_KEY", "")
-KALSHI_PEM      = os.getenv("KALSHI_PRIVATE_KEY", "")
+KALSHI_BASE_URL  = os.getenv("KALSHI_BASE_URL", "https://trading-api.kalshi.com/trade-api/v2")
+KALSHI_API_KEY   = os.getenv("KALSHI_API_KEY", "")
+KALSHI_PEM       = os.getenv("KALSHI_PRIVATE_KEY", "")        # raw PEM content
+KALSHI_PEM_PATH  = os.getenv("KALSHI_PRIVATE_KEY_PATH", "")   # OR path to .pem file
 
 
 class KalshiClient:
     """
-    Authenticated Kalshi API client using RSA key signing.
+    Authenticated Kalshi API client using RSA-PSS key signing.
     Kalshi auth flow:
       1. Build message = f"{timestamp}{method}{path}"
-      2. Sign with RSA-SHA256 private key
+      2. Sign with RSA-PSS SHA256 private key
       3. Send headers: KALSHI-ACCESS-KEY, KALSHI-ACCESS-SIGNATURE, KALSHI-ACCESS-TIMESTAMP
     """
 
@@ -38,19 +38,40 @@ class KalshiClient:
         self.session.headers.update({"Content-Type": "application/json"})
 
     def _load_private_key(self):
-        if not KALSHI_PEM:
-            return None
-        try:
+        # Try raw PEM content first, then fall back to file path
+        pem_bytes = None
+
+        if KALSHI_PEM:
             pem_bytes = KALSHI_PEM.encode() if isinstance(KALSHI_PEM, str) else KALSHI_PEM
+        elif KALSHI_PEM_PATH:
+            try:
+                with open(KALSHI_PEM_PATH.strip(), "rb") as f:
+                    pem_bytes = f.read()
+            except Exception as e:
+                print(f"[KalshiClient] Failed to read key file {KALSHI_PEM_PATH}: {e}")
+                return None
+
+        if not pem_bytes:
+            print("[KalshiClient] No private key configured (set KALSHI_PRIVATE_KEY or KALSHI_PRIVATE_KEY_PATH)")
+            return None
+
+        try:
             return serialization.load_pem_private_key(pem_bytes, password=None, backend=default_backend())
         except Exception as e:
             print(f"[KalshiClient] Failed to load private key: {e}")
             return None
 
     def _sign(self, timestamp_ms: str, method: str, path: str) -> str:
-        """Sign the request message with RSA-SHA256."""
+        """Sign with RSA-PSS SHA256 — Kalshi's required algorithm."""
         message = f"{timestamp_ms}{method}{path}".encode()
-        signature = self._private_key.sign(message, padding.PKCS1v15(), hashes.SHA256())
+        signature = self._private_key.sign(
+            message,
+            padding.PSS(
+                mgf=padding.MGF1(hashes.SHA256()),
+                salt_length=padding.PSS.DIGEST_LENGTH,
+            ),
+            hashes.SHA256(),
+        )
         return base64.b64encode(signature).decode()
 
     def _headers(self, method: str, path: str) -> Dict:
