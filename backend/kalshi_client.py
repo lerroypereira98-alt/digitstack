@@ -240,26 +240,28 @@ class KalshiClient:
 
     def scan_btc_15min_signals(self) -> List[Dict]:
         """
-        Scan all open BTC markets and return ones matching our TierB/C entry criteria:
-        - 73%+ of market elapsed
-        - YES price ≥ 0.74 or ≤ 0.26
-        Returns ranked list of opportunities with signal tier and win probability.
+        Scan all open BTC markets for TierA/B entry signals.
+        - TierA: 73-80% elapsed, ~4 min left, price 0.76+/0.24-
+        - TierB: 80-85% elapsed, ~3 min left, price 0.74+/0.26-
+        - TierC (85%+) is EXCLUDED — Kalshi locks market at ~2 min left
+        - Entry price uses ASK (not midpoint) so orders actually fill
+        - Hard cap: entry price ≤ 0.85 (above this payout too thin)
         """
         markets = self.get_btc_markets()
         signals = []
 
+        import datetime
         for m in markets:
             ticker      = m.get("ticker", "")
-            yes_bid     = m.get("yes_bid", 0) / 100        # convert cents → decimal
+            yes_bid     = m.get("yes_bid", 0) / 100
             yes_ask     = m.get("yes_ask", 0) / 100
-            yes_price   = (yes_bid + yes_ask) / 2          # midpoint
-            no_price    = 1.0 - yes_price
+            no_bid      = m.get("no_bid",  0) / 100
+            no_ask      = m.get("no_ask",  0) / 100
+            yes_mid     = (yes_bid + yes_ask) / 2
             open_time   = m.get("open_time", "")
             close_time  = m.get("close_time", "")
             volume      = m.get("volume", 0)
 
-            # Calculate market progress
-            import datetime
             try:
                 now        = datetime.datetime.utcnow().timestamp()
                 open_ts    = datetime.datetime.fromisoformat(open_time.replace("Z", "+00:00")).timestamp()
@@ -270,54 +272,60 @@ class KalshiClient:
             except Exception:
                 continue
 
-            if progress < 0.73 or mins_left < 0.5:
+            # TierC (85%+) excluded — too late, Kalshi locks orders near resolution
+            if progress < 0.73 or progress >= 0.85 or mins_left < 1.0:
                 continue
 
-            # Tier classification
             tier = None
             side = None
             win_prob = 0.0
 
-            if progress >= 0.85:
-                if yes_price >= 0.70:
-                    tier, side, win_prob = "TierC", "yes", 0.95
-                elif yes_price <= 0.30:
-                    tier, side, win_prob = "TierC", "no",  0.95
-            elif progress >= 0.80:
-                if yes_price >= 0.74:
+            if progress >= 0.80:
+                if yes_mid >= 0.74:
                     tier, side, win_prob = "TierB", "yes", 0.92
-                elif yes_price <= 0.26:
+                elif yes_mid <= 0.26:
                     tier, side, win_prob = "TierB", "no",  0.92
             elif progress >= 0.73:
-                if yes_price >= 0.76:
+                if yes_mid >= 0.76:
                     tier, side, win_prob = "TierA", "yes", 0.88
-                elif yes_price <= 0.24:
+                elif yes_mid <= 0.24:
                     tier, side, win_prob = "TierA", "no",  0.88
 
             if not tier:
                 continue
 
-            entry_price = yes_price if side == "yes" else no_price
+            # Use ASK price for entry so limit order fills immediately
+            # no_ask = 1 - yes_bid (Kalshi complementary pricing)
+            if side == "yes":
+                entry_price = yes_ask if yes_ask > 0 else yes_mid
+            else:
+                entry_price = no_ask if no_ask > 0 else (1.0 - yes_bid)
+
+            # Hard cap: skip if ask is too expensive (thin payout)
+            if entry_price > 0.85:
+                continue
+
             payout_ratio = round((1.0 - entry_price) / entry_price, 3)
             ev_per_100   = round(win_prob * (1.0 - entry_price) * 100 - (1 - win_prob) * 100, 2)
 
             signals.append({
-                "ticker":      ticker,
-                "tier":        tier,
-                "side":        side.upper(),
-                "yes_price":   round(yes_price, 3),
-                "no_price":    round(no_price, 3),
-                "entry_price": round(entry_price, 3),
+                "ticker":       ticker,
+                "tier":         tier,
+                "side":         side.upper(),
+                "yes_bid":      round(yes_bid, 3),
+                "yes_ask":      round(yes_ask, 3),
+                "yes_mid":      round(yes_mid, 3),
+                "entry_price":  round(entry_price, 3),
                 "payout_ratio": payout_ratio,
-                "win_prob":    win_prob,
-                "ev_per_100":  ev_per_100,
-                "progress":    f"{progress:.0%}",
-                "mins_left":   round(mins_left, 1),
-                "volume":      volume,
+                "win_prob":     win_prob,
+                "ev_per_100":   ev_per_100,
+                "progress":     f"{progress:.0%}",
+                "mins_left":    round(mins_left, 1),
+                "volume":       volume,
             })
 
-        # Sort by tier priority then EV
-        tier_order = {"TierC": 0, "TierB": 1, "TierA": 2}
+        # Sort TierB first, then by EV
+        tier_order = {"TierB": 0, "TierA": 1}
         signals.sort(key=lambda x: (tier_order.get(x["tier"], 9), -x["ev_per_100"]))
         return signals
 

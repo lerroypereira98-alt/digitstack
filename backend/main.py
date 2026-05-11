@@ -1628,7 +1628,9 @@ async def kalshi_auto_signal():
             }
 
         best = signals[0]
+        # Use ask price (already baked into entry_price from scanner)
         entry_cents = round(best["entry_price"] * 100)
+        entry_cents = max(1, min(99, entry_cents))
 
         # 3. Size trade: 5% of balance, capped at $1.00, floored at $0.10
         risk_budget = min(balance_usd * KALSHI_RISK_PCT, KALSHI_MAX_TRADE_USD)
@@ -1638,8 +1640,7 @@ async def kalshi_auto_signal():
         contracts = max(1, int(risk_budget * 100 / entry_cents)) if entry_cents > 0 else 1
         actual_cost = round(contracts * entry_cents / 100, 2)
 
-        # If even 1 contract exceeds budget, flag it but still return the signal
-        within_budget = actual_cost <= round(balance_usd * KALSHI_RISK_PCT, 2) * 1.2  # 20% tolerance
+        within_budget = actual_cost <= round(balance_usd * KALSHI_RISK_PCT, 2) * 1.2
 
         trades_remaining = int(balance_usd / actual_cost) if actual_cost > 0 else 0
 
