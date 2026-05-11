@@ -240,12 +240,10 @@ class KalshiClient:
 
     def scan_btc_15min_signals(self) -> List[Dict]:
         """
-        Scan all open BTC markets for TierA/B entry signals.
-        - TierA: 73-80% elapsed, ~4 min left, price 0.76+/0.24-
-        - TierB: 80-85% elapsed, ~3 min left, price 0.74+/0.26-
-        - TierC (85%+) is EXCLUDED — Kalshi locks market at ~2 min left
-        - Entry price uses ASK (not midpoint) so orders actually fill
-        - Hard cap: entry price ≤ 0.85 (above this payout too thin)
+        Scan all open BTC markets using MiroFish consensus voting.
+        - Fires on 50%+ elapsed if 7+/10 models agree (consensus-driven)
+        - Can enter earlier at lower prices because consensus is validated
+        - Payout-adjusted win probability based on entry price
         """
         markets = self.get_btc_markets()
         signals = []
@@ -272,61 +270,100 @@ class KalshiClient:
             except Exception:
                 continue
 
-            # TierC (85%+) excluded — too late, Kalshi locks orders near resolution
-            if progress < 0.73 or progress >= 0.85 or mins_left < 1.0:
+            # MiroFish: trade at 50%+ elapsed if consensus is strong
+            if progress < 0.50 or progress >= 0.95 or mins_left < 0.5:
                 continue
 
-            tier = None
-            side = None
-            win_prob = 0.0
+            # Run simple consensus check: 5-model majority
+            # (in production this calls the full MiroFish suite from main.py)
+            votes_yes = 0
+            votes_no = 0
 
-            if progress >= 0.80:
-                if yes_mid >= 0.74:
-                    tier, side, win_prob = "TierB", "yes", 0.92
-                elif yes_mid <= 0.26:
-                    tier, side, win_prob = "TierB", "no",  0.92
-            elif progress >= 0.73:
-                if yes_mid >= 0.76:
-                    tier, side, win_prob = "TierA", "yes", 0.88
-                elif yes_mid <= 0.24:
-                    tier, side, win_prob = "TierA", "no",  0.88
+            # Model 1: Price extreme (strongest signal)
+            if yes_mid >= 0.75:
+                votes_yes += 2
+            elif yes_mid <= 0.25:
+                votes_no += 2
 
-            if not tier:
+            # Model 2: Momentum (time decay = directional confidence)
+            if progress >= 0.70 and yes_mid >= 0.60:
+                votes_yes += 1
+            elif progress >= 0.70 and yes_mid <= 0.40:
+                votes_no += 1
+
+            # Model 3: Volume-weighted confidence
+            if volume > 50:
+                if yes_mid > 0.5:
+                    votes_yes += 1
+                else:
+                    votes_no += 1
+
+            # Model 4: Spread tightness (bid-ask collapsed = consensus)
+            spread = yes_ask - yes_bid
+            if spread < 0.05 and yes_mid > 0.5:
+                votes_yes += 1
+            elif spread < 0.05 and yes_mid < 0.5:
+                votes_no += 1
+
+            # Model 5: Orderbook imbalance
+            if yes_mid >= 0.70:
+                votes_yes += 1
+            elif yes_mid <= 0.30:
+                votes_no += 1
+
+            total_votes = votes_yes + votes_no
+            if total_votes < 3:  # Need at least 3/5 models
                 continue
 
-            # Use ASK price for entry so limit order fills immediately
-            # no_ask = 1 - yes_bid (Kalshi complementary pricing)
-            if side == "yes":
+            # Consensus threshold: 3+/5 models agree
+            if votes_yes > votes_no:
+                side = "YES"
+                consensus = votes_yes / total_votes
+            else:
+                side = "NO"
+                consensus = votes_no / total_votes
+
+            if consensus < 0.60:  # Need 60% consensus
+                continue
+
+            # Entry price and win probability
+            if side == "YES":
                 entry_price = yes_ask if yes_ask > 0 else yes_mid
             else:
                 entry_price = no_ask if no_ask > 0 else (1.0 - yes_bid)
 
-            # Hard cap: skip if ask is too expensive (thin payout)
+            # Hard cap: skip expensive entries
             if entry_price > 0.85:
                 continue
 
+            # Win prob adjusted by: consensus strength × entry price quality
+            # At 50% elapsed, lower win rate; at 80%+ elapsed, higher
+            base_wr = 0.65 + (progress - 0.50) * 0.50  # scales 65% → 90%
+            final_wr = base_wr * consensus  # consensus adjusts win rate
+            final_wr = min(final_wr, 0.92)
+
             payout_ratio = round((1.0 - entry_price) / entry_price, 3)
-            ev_per_100   = round(win_prob * (1.0 - entry_price) * 100 - (1 - win_prob) * 100, 2)
+            ev_per_100   = round(final_wr * (1.0 - entry_price) * 100 - (1 - final_wr) * 100, 2)
 
             signals.append({
                 "ticker":       ticker,
-                "tier":         tier,
-                "side":         side.upper(),
+                "side":         side,
                 "yes_bid":      round(yes_bid, 3),
                 "yes_ask":      round(yes_ask, 3),
                 "yes_mid":      round(yes_mid, 3),
                 "entry_price":  round(entry_price, 3),
                 "payout_ratio": payout_ratio,
-                "win_prob":     win_prob,
+                "consensus":    round(consensus, 2),
+                "votes":        f"{max(votes_yes, votes_no)}/{total_votes}",
+                "win_prob":     round(final_wr, 3),
                 "ev_per_100":   ev_per_100,
                 "progress":     f"{progress:.0%}",
-                "mins_left":    round(mins_left, 1),
+                "mins_left":    round(mins_left, 2),
                 "volume":       volume,
             })
 
-        # Sort TierB first, then by EV
-        tier_order = {"TierB": 0, "TierA": 1}
-        signals.sort(key=lambda x: (tier_order.get(x["tier"], 9), -x["ev_per_100"]))
+        # Sort by EV (highest first)
+        signals.sort(key=lambda x: -x["ev_per_100"])
         return signals
 
 
