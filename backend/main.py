@@ -460,6 +460,15 @@ except Exception as _e:
     WEATHER_AVAILABLE = False
     print(f"[main] Weather client not available: {_e}")
 
+try:
+    from polymarket_client import btc_feed, poly_client, build_signal, _is_active_hours, MOMENTUM_THRESHOLDS
+    btc_feed.start()  # Start Binance WebSocket feed
+    POLYMARKET_AVAILABLE = True
+    print("[main] Binance price feed started")
+except Exception as _e:
+    POLYMARKET_AVAILABLE = False
+    print(f"[main] Polymarket client not available: {_e}")
+
 app = FastAPI(title="APEX Trading Bot API")
 
 app.add_middleware(
@@ -2316,6 +2325,94 @@ async def weather_strategy_info():
 
 
 # ============================================================================
+# ============================================================================
+# POLYMARKET BTC 5-MIN ENDPOINTS
+# ============================================================================
+
+@app.get("/api/polymarket/btc-price")
+async def polymarket_btc_price():
+    """Live BTC price from Binance WebSocket feed."""
+    if not POLYMARKET_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Polymarket/Binance feed not available")
+    price = btc_feed.get_price()
+    volatility = btc_feed.get_recent_volatility(60)
+    return {
+        "btc_price":       price,
+        "connected":       btc_feed.connected,
+        "volatility_1m":   volatility,
+        "active_window":   _is_active_hours(),
+    }
+
+@app.get("/api/polymarket/momentum")
+async def polymarket_momentum():
+    """Current 5-min candle momentum from Binance live feed."""
+    if not POLYMARKET_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Binance feed not available")
+    momentum = btc_feed.get_candle_momentum()
+    if not momentum:
+        return {"momentum": None, "message": "Feed warming up — check again in 10s"}
+    signal = build_signal(momentum)
+    return {
+        "momentum":       momentum,
+        "signal":         signal,
+        "thresholds":     MOMENTUM_THRESHOLDS,
+        "ready_to_trade": signal is not None,
+    }
+
+@app.get("/api/polymarket/markets")
+async def polymarket_markets():
+    """Get active BTC 5-min markets on Polymarket."""
+    if not POLYMARKET_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Polymarket not available")
+    markets = poly_client.get_btc_5min_markets()
+    return {"markets": markets, "count": len(markets)}
+
+@app.get("/api/polymarket/auto-signal")
+async def polymarket_auto_signal():
+    """
+    Full pipeline: Binance momentum → signal → sized Polymarket order.
+    Fires only during active hours (7-10am ET, 2-6pm ET) with 60%+ confidence.
+    """
+    if not POLYMARKET_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Polymarket not available")
+
+    momentum = btc_feed.get_candle_momentum()
+    if not momentum:
+        return {"signal": None, "message": "Feed warming up"}
+
+    if not momentum.get("active_window"):
+        return {
+            "signal": None,
+            "message": "Outside active hours (7-10am ET, 2-6pm ET)",
+            "btc_price": btc_feed.get_price(),
+        }
+
+    signal = build_signal(momentum)
+    if not signal:
+        return {
+            "signal": None,
+            "momentum": momentum,
+            "message": f"Momentum {momentum['move_pct']:.3f}% — below threshold, waiting",
+        }
+
+    markets = poly_client.get_btc_5min_markets()
+    return {
+        "signal":         signal,
+        "momentum":       momentum,
+        "markets_found":  len(markets),
+        "ready_to_trade": True,
+        "note": "POST to /api/polymarket/order to execute",
+    }
+
+@app.post("/api/polymarket/order")
+async def polymarket_place_order(token_id: str, side: str, size_usd: float, price: float):
+    """Place a BTC 5-min order on Polymarket."""
+    if not POLYMARKET_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Polymarket not available")
+    result = poly_client.place_order(token_id, side, size_usd, price)
+    return result
+
+
 # MAIN EXECUTION
 # ============================================================================
 
