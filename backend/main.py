@@ -461,13 +461,13 @@ except Exception as _e:
     print(f"[main] Weather client not available: {_e}")
 
 try:
-    from polymarket_client import btc_feed, poly_client, build_signal, _is_active_hours, MOMENTUM_THRESHOLDS
+    from polymarket_client import btc_feed, build_signal, _is_active_hours, MOMENTUM_THRESHOLDS
     btc_feed.start()  # Start Binance WebSocket feed
-    POLYMARKET_AVAILABLE = True
-    print("[main] Binance price feed started")
+    BINANCE_AVAILABLE = True
+    print("[main] Binance price feed started for Kalshi momentum")
 except Exception as _e:
-    POLYMARKET_AVAILABLE = False
-    print(f"[main] Polymarket client not available: {_e}")
+    BINANCE_AVAILABLE = False
+    print(f"[main] Binance feed not available: {_e}")
 
 app = FastAPI(title="APEX Trading Bot API")
 
@@ -2326,64 +2326,59 @@ async def weather_strategy_info():
 
 # ============================================================================
 # ============================================================================
-# POLYMARKET BTC 5-MIN ENDPOINTS
+# BINANCE MOMENTUM FOR KALSHI 15-MIN
 # ============================================================================
 
-@app.get("/api/polymarket/btc-price")
-async def polymarket_btc_price():
-    """Live BTC price from Binance WebSocket feed."""
-    if not POLYMARKET_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Polymarket/Binance feed not available")
-    price = btc_feed.get_price()
-    volatility = btc_feed.get_recent_volatility(60)
-    return {
-        "btc_price":       price,
-        "connected":       btc_feed.connected,
-        "volatility_1m":   volatility,
-        "active_window":   _is_active_hours(),
-    }
-
-@app.get("/api/polymarket/momentum")
-async def polymarket_momentum():
-    """Current 5-min candle momentum from Binance live feed."""
-    if not POLYMARKET_AVAILABLE:
+@app.get("/api/kalshi/btc-momentum")
+async def kalshi_btc_momentum():
+    """
+    Live BTC momentum from Binance WebSocket (15-min candles).
+    Shows direction, move %, seconds elapsed, and confidence level.
+    """
+    if not BINANCE_AVAILABLE:
         raise HTTPException(status_code=503, detail="Binance feed not available")
-    momentum = btc_feed.get_candle_momentum()
+
+    price = btc_feed.get_price()
+    momentum = btc_feed.get_15min_momentum()
+
     if not momentum:
-        return {"momentum": None, "message": "Feed warming up — check again in 10s"}
+        return {
+            "momentum": None,
+            "btc_price": price,
+            "message": "Feed warming up — check again in 30s",
+            "connected": btc_feed.connected,
+        }
+
     signal = build_signal(momentum)
+
     return {
+        "btc_price":      price,
         "momentum":       momentum,
         "signal":         signal,
-        "thresholds":     MOMENTUM_THRESHOLDS,
+        "confidence_levels": MOMENTUM_THRESHOLDS,
         "ready_to_trade": signal is not None,
+        "active_window":  _is_active_hours(),
     }
 
-@app.get("/api/polymarket/markets")
-async def polymarket_markets():
-    """Get active BTC 5-min markets on Polymarket."""
-    if not POLYMARKET_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Polymarket not available")
-    markets = poly_client.get_btc_5min_markets()
-    return {"markets": markets, "count": len(markets)}
-
-@app.get("/api/polymarket/auto-signal")
-async def polymarket_auto_signal():
+@app.get("/api/kalshi/momentum-signal")
+async def kalshi_momentum_signal():
     """
-    Full pipeline: Binance momentum → signal → sized Polymarket order.
-    Fires only during active hours (7-10am ET, 2-6pm ET) with 60%+ confidence.
+    Full Binance momentum → Kalshi 15-min signal.
+    Returns ready-to-place order when momentum fires.
     """
-    if not POLYMARKET_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Polymarket not available")
+    if not BINANCE_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Binance feed not available")
+    if not KALSHI_AVAILABLE:
+        raise HTTPException(status_code=503, detail="Kalshi not available")
 
-    momentum = btc_feed.get_candle_momentum()
+    momentum = btc_feed.get_15min_momentum()
     if not momentum:
-        return {"signal": None, "message": "Feed warming up"}
+        return {"signal": None, "message": "Waiting for momentum to develop"}
 
     if not momentum.get("active_window"):
         return {
             "signal": None,
-            "message": "Outside active hours (7-10am ET, 2-6pm ET)",
+            "message": "Outside active hours (7am-4pm ET)",
             "btc_price": btc_feed.get_price(),
         }
 
@@ -2392,25 +2387,25 @@ async def polymarket_auto_signal():
         return {
             "signal": None,
             "momentum": momentum,
-            "message": f"Momentum {momentum['move_pct']:.3f}% — below threshold, waiting",
+            "message": f"Momentum {momentum['move_pct']:.3f}% < threshold, waiting",
         }
 
-    markets = poly_client.get_btc_5min_markets()
+    # Get live BTC markets and return with order sizing
+    markets = _kalshi.get_btc_markets()
+    if not markets:
+        return {
+            "signal": signal,
+            "message": "No BTC 15-min markets available",
+        }
+
+    best_market = markets[0] if markets else None
     return {
         "signal":         signal,
         "momentum":       momentum,
-        "markets_found":  len(markets),
+        "best_market":    best_market,
         "ready_to_trade": True,
-        "note": "POST to /api/polymarket/order to execute",
+        "note": "Use signal 'side' and momentum direction to place Kalshi order",
     }
-
-@app.post("/api/polymarket/order")
-async def polymarket_place_order(token_id: str, side: str, size_usd: float, price: float):
-    """Place a BTC 5-min order on Polymarket."""
-    if not POLYMARKET_AVAILABLE:
-        raise HTTPException(status_code=503, detail="Polymarket not available")
-    result = poly_client.place_order(token_id, side, size_usd, price)
-    return result
 
 
 # MAIN EXECUTION
