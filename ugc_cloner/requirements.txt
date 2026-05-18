@@ -1,0 +1,44 @@
+# UGC Video Cloner — Python dependencies
+# Install: pip install -r requirements.txt
+# System: sudo apt install ffmpeg
+
+# ── Web scraping ──────────────────────────────────────────────
+requests>=2.31.0
+beautifulsoup4>=4.12.0
+lxml>=4.9.0
+playwright>=1.40.0          # Optional: for JS-rendered pages
+
+# ── Image processing ──────────────────────────────────────────
+Pillow>=10.0.0
+
+# ── Text-to-speech ────────────────────────────────────────────
+gTTS>=2.4.0                 # Primary: Google TTS (free, needs internet)
+pyttsx3>=2.90               # Fallback: offline TTS
+edge-tts>=6.1.9             # Optional: Microsoft Edge TTS (very natural)
+
+# ── Config ────────────────────────────────────────────────────
+PyYAML>=6.0.0
+
+# ── Scheduling ────────────────────────────────────────────────
+APScheduler>=3.10.0
+pytz>=2024.1
+
+# ── Platform APIs ─────────────────────────────────────────────
+# TikTok: uses their REST API directly (requests)
+# Instagram Graph API: uses requests directly
+google-api-python-client>=2.100.0    # YouTube Data API
+google-auth-httplib2>=0.2.0
+google-auth-oauthlib>=1.1.0
+
+# ── Optional: Amazon PA-API (if you have credentials) ─────────
+# python-amazon-paapi>=1.1.0
+
+# ── Optional: Stable Diffusion (for AI image gen) ─────────────
+# diffusers>=0.25.0          # HuggingFace Diffusers (local SD)
+# transformers>=4.35.0
+# torch>=2.1.0               # Install separately with CUDA: pip install torch --index-url https://download.pytorch.org/whl/cu121
+# accelerate>=0.25.0
+
+# ── Utilities ─────────────────────────────────────────────────
+tqdm>=4.66.0                # Progress bars
+python-dotenv>=1.0.0        # Optional: load .env files
