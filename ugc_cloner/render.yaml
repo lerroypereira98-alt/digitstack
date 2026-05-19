@@ -1,0 +1,10 @@
+services:
+  - type: web
+    name: ugc-video-cloner
+    runtime: docker
+    dockerfilePath: ./ugc_cloner/Dockerfile
+    dockerContext: ./ugc_cloner
+    plan: free
+    envVars:
+      - key: PORT
+        value: 8080
