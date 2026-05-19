@@ -1,0 +1,32 @@
+[
+  {
+    "title": "Vitamin C Serum",
+    "image_path": "product_images/serum.jpg",
+    "category": "Beauty",
+    "description": "Professional brightening serum with 20% vitamin C"
+  },
+  {
+    "title": "Probiotic Capsules",
+    "image_path": "product_images/probiotics.jpg",
+    "category": "Health",
+    "description": "30 strain probiotic blend for gut health"
+  },
+  {
+    "title": "Wireless Earbuds",
+    "image_path": "product_images/earbuds.jpg",
+    "category": "Tech",
+    "description": "Noise-canceling earbuds with 48h battery"
+  },
+  {
+    "title": "Hydration Face Mask",
+    "image_path": "product_images/mask.jpg",
+    "category": "Beauty",
+    "description": "Hyaluronic acid + aloe vera hydration mask"
+  },
+  {
+    "title": "Protein Powder",
+    "image_path": "product_images/protein.jpg",
+    "category": "Fitness",
+    "description": "Plant-based protein isolate, vanilla flavor"
+  }
+]
