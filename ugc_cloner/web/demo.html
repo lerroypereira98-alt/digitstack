@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UGC Video Cloner</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d0d14; --bg2: #14141f; --bg3: #1c1c2e; --border: #2a2a40;
+      --accent: #7c3aed; --accent2: #06b6d4; --green: #10b981;
+      --red: #ef4444; --yellow: #f59e0b; --text: #e2e2f0; --text2: #8888aa; --radius: 12px;
+    }
+    body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; min-height: 100vh; display: flex; }
+    .sidebar { width: 220px; background: var(--bg2); border-right: 1px solid var(--border); padding: 24px 0; flex-shrink: 0; display: flex; flex-direction: column; position: fixed; height: 100vh; }
+    .logo { padding: 0 20px 24px; border-bottom: 1px solid var(--border); }
+    .logo h1 { font-size: 15px; font-weight: 700; color: #fff; }
+    .logo span { font-size: 12px; color: var(--text2); }
+    .nav { padding: 16px 0; flex: 1; }
+    .nav-item { display: flex; align-items: center; gap: 10px; padding: 10px 20px; cursor: pointer; font-size: 14px; color: var(--text2); border-left: 3px solid transparent; transition: all 0.15s; }
+    .nav-item:hover { background: var(--bg3); color: var(--text); }
+    .nav-item.active { border-left-color: var(--accent); color: #fff; background: var(--bg3); }
+    .nav-item .icon { font-size: 18px; width: 22px; text-align: center; }
+    .sys { padding: 16px 20px; border-top: 1px solid var(--border); font-size: 12px; }
+    .srow { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--text2); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 4px; }
+    .dot.green { background: var(--green); } .dot.red { background: var(--red); } .dot.yellow { background: var(--yellow); }
+    .main { margin-left: 220px; flex: 1; padding: 32px; max-width: 1200px; }
+    .page { display: none; } .page.active { display: block; }
+    .ph { margin-bottom: 28px; } .ph h2 { font-size: 24px; font-weight: 700; margin-bottom: 6px; } .ph p { color: var(--text2); font-size: 14px; }
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .card { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 20px; }
+    .card .cl { font-size: 12px; color: var(--text2); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .card .cv { font-size: 32px; font-weight: 700; color: #fff; }
+    .card .cs { font-size: 12px; color: var(--text2); margin-top: 4px; }
+    .btn { display: inline-flex; align-items: center; gap: 8px; padding: 10px 20px; border-radius: 8px; font-size: 14px; font-weight: 600; border: none; cursor: pointer; transition: all 0.15s; }
+    .btn-primary { background: var(--accent); color: #fff; } .btn-primary:hover { background: #6d28d9; }
+    .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); } .btn-secondary:hover { background: var(--border); }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+    .fs { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; }
+    .fs h3 { font-size: 16px; margin-bottom: 20px; font-weight: 600; }
+    .fg { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .fg2 { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; }
+    .fg3 { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 16px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 13px; color: var(--text2); font-weight: 500; }
+    .form-group input, .form-group select { background: var(--bg3); border: 1px solid var(--border); border-radius: 8px; color: var(--text); padding: 10px 12px; font-size: 14px; outline: none; transition: border-color 0.15s; }
+    .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+    .fhint { font-size: 11px; color: var(--text2); margin-top: 2px; }
+    .cbg { display: flex; flex-wrap: wrap; gap: 10px; }
+    .cbi { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+    .cbi input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+    .pbar { background: var(--bg3); border-radius: 999px; height: 8px; overflow: hidden; margin: 12px 0; }
+    .pfill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 999px; transition: width 0.5s; }
+    .log { background: #0a0a12; border: 1px solid var(--border); border-radius: 8px; padding: 16px; font-family: monospace; font-size: 12px; color: #88ffaa; height: 200px; overflow-y: auto; margin-top: 16px; }
+    .log-line { margin-bottom: 4px; }
+    .tw { overflow-x: auto; } table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead tr { border-bottom: 1px solid var(--border); }
+    th { padding: 10px 14px; color: var(--text2); font-weight: 500; text-align: left; }
+    td { padding: 10px 14px; border-bottom: 1px solid #1e1e2e; }
+    tr:hover td { background: var(--bg3); }
+    .badge { display: inline-block; padding: 2px 8px; border-radius: 999px; font-size: 11px; font-weight: 600; }
+    .badge.excellent { background: #065f46; color: #6ee7b7; }
+    .badge.good { background: #1e3a5f; color: #93c5fd; }
+    .badge.fair { background: #3b2100; color: #fcd34d; }
+    .vgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+    .vc { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); overflow: hidden; cursor: pointer; transition: transform 0.15s; }
+    .vc:hover { transform: translateY(-2px); border-color: var(--accent); }
+    .vt { width: 100%; aspect-ratio: 9/16; background: linear-gradient(135deg, var(--accent) 0%, var(--accent2) 100%); display: flex; align-items: center; justify-content: center; font-size: 40px; }
+    .vi { padding: 10px; } .vn { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; } .vs { font-size: 11px; color: var(--text2); margin-top: 2px; }
+    .sgrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .sc { background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; overflow: hidden; }
+    .sc-inner { aspect-ratio: 9/16; display: flex; align-items: center; justify-content: center; font-size: 32px; }
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; width: fit-content; }
+    .tab { padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text2); }
+    .tab.active { background: var(--accent); color: #fff; }
+    .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+    .alert.success { background: #052e16; border: 1px solid #065f46; color: #6ee7b7; }
+    .alert.info { background: #0c1a3a; border: 1px solid #1e3a8a; color: #93c5fd; }
+    .hidden { display: none !important; }
+    .acts { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+    input[type=range] { accent-color: var(--accent); width: 100%; }
+    .step-row { display: flex; align-items: center; gap: 16px; margin-bottom: 14px; }
+    .step-num { width: 32px; height: 32px; border-radius: 50%; background: var(--accent); display: flex; align-items: center; justify-content: center; font-weight: 700; flex-shrink: 0; font-size: 14px; }
+    .step-text strong { display: block; margin-bottom: 2px; }
+    .step-text span { font-size: 13px; color: var(--text2); }
+    .modal-ov { position: fixed; inset: 0; background: rgba(0,0,0,0.85); display: none; align-items: center; justify-content: center; z-index: 100; }
+    .modal-ov.open { display: flex; }
+    .modal { background: var(--bg2); border: 1px solid var(--border); border-radius: 16px; max-width: 380px; width: 90%; overflow: hidden; }
+    .modal-close { padding: 12px 16px; cursor: pointer; font-size: 13px; color: var(--text2); text-align: right; display: block; }
+    .modal-body { padding: 24px; text-align: center; font-size: 14px; color: var(--text2); line-height: 1.6; }
+    .modal-body strong { color: var(--text); display: block; font-size: 16px; margin-bottom: 8px; }
+  </style>
+</head>
+<body>
+
+<nav class="sidebar">
+  <div class="logo"><h1>🎬 UGC Cloner</h1><span>Free · Local · Automated</span></div>
+  <div class="nav">
+    <div class="nav-item active" onclick="show('dashboard')"><span class="icon">📊</span> Dashboard</div>
+    <div class="nav-item" onclick="show('discover')"><span class="icon">🔍</span> Discover</div>
+    <div class="nav-item" onclick="show('generate')"><span class="icon">🎬</span> Generate</div>
+    <div class="nav-item" onclick="show('library')"><span class="icon">📁</span> Library</div>
+    <div class="nav-item" onclick="show('schedule')"><span class="icon">📅</span> Schedule</div>
+    <div class="nav-item" onclick="show('settings')"><span class="icon">⚙️</span> Settings</div>
+  </div>
+  <div class="sys">
+    <div class="srow"><span>FFmpeg</span><span><span class="dot green"></span>OK</span></div>
+    <div class="srow"><span>Config</span><span><span class="dot yellow"></span>Needs tag</span></div>
+    <div class="srow"><span>Mode</span><span style="color:var(--green)">Demo</span></div>
+  </div>
+</nav>
+
+<main class="main">
+
+  <!-- DASHBOARD -->
+  <div id="page-dashboard" class="page active">
+    <div class="ph"><h2>Dashboard</h2><p>Your UGC automation hub — $0/month, runs on your machine</p></div>
+    <div class="cards">
+      <div class="card"><div class="cl">Videos Generated</div><div class="cv" id="sv">0</div><div class="cs">1080p vertical</div></div>
+      <div class="card"><div class="cl">Slideshows</div><div class="cv" id="ss">0</div><div class="cs">carousel-ready</div></div>
+      <div class="card"><div class="cl">Posts Scheduled</div><div class="cv" id="sp">0</div><div class="cs">across platforms</div></div>
+      <div class="card"><div class="cl">Operating Cost</div><div class="cv" style="color:var(--green)">$0</div><div class="cs">100% local · free</div></div>
+    </div>
+    <div class="fs">
+      <h3>🚀 Quick Start</h3>
+      <p style="color:var(--text2);font-size:14px;margin-bottom:20px">Follow these 4 steps to create and schedule 200–300 videos.</p>
+      <div class="step-row"><div class="step-num">1</div><div class="step-text"><strong>Set your Amazon Associates tag</strong><span>Go to Settings → paste your tag → Save</span></div><button class="btn btn-secondary" onclick="show('settings')" style="margin-left:auto">Settings →</button></div>
+      <div class="step-row"><div class="step-num">2</div><div class="step-text"><strong>Discover viral products</strong><span>Scrape Amazon + TikTok for high-commission trending products</span></div><button class="btn btn-secondary" onclick="show('discover')" style="margin-left:auto">Discover →</button></div>
+      <div class="step-row"><div class="step-num">3</div><div class="step-text"><strong>Generate videos + slideshows</strong><span>1080p with voiceover, Ken Burns effect, text overlays</span></div><button class="btn btn-secondary" onclick="show('generate')" style="margin-left:auto">Generate →</button></div>
+      <div class="step-row"><div class="step-num">4</div><div class="step-text"><strong>Schedule & post automatically</strong><span>4 posts/day across TikTok, Instagram, YouTube Shorts</span></div><button class="btn btn-secondary" onclick="show('schedule')" style="margin-left:auto">Schedule →</button></div>
+    </div>
+  </div>
+
+  <!-- DISCOVER -->
+  <div id="page-discover" class="page">
+    <div class="ph"><h2>🔍 Discover Products</h2><p>Find trending products with the best affiliate commissions from Amazon + TikTok</p></div>
+    <div class="fs">
+      <h3>Scraper Settings</h3>
+      <div class="fg">
+        <div class="form-group"><label>Categories</label>
+          <div class="cbg">
+            <label class="cbi"><input type="checkbox" checked> Beauty</label>
+            <label class="cbi"><input type="checkbox" checked> Health</label>
+            <label class="cbi"><input type="checkbox" checked> Kitchen</label>
+            <label class="cbi"><input type="checkbox" checked> Electronics</label>
+            <label class="cbi"><input type="checkbox"> Toys</label>
+            <label class="cbi"><input type="checkbox"> Sports</label>
+            <label class="cbi"><input type="checkbox"> Pet Supplies</label>
+          </div>
+        </div>
+        <div class="form-group"><label>Pages per category</label>
+          <select><option>1 page (~20 products)</option><option selected>2 pages (~40 products)</option><option>3 pages (~60 products)</option></select>
+        </div>
+      </div>
+      <div class="acts"><button class="btn btn-primary" onclick="runDiscover()">🔍 Start Discovery</button></div>
+      <div id="disc-prog" class="hidden">
+        <div class="pbar"><div class="pfill" id="dpf" style="width:0%"></div></div>
+        <div class="log" id="dlog"></div>
+      </div>
+    </div>
+    <div id="disc-res" class="hidden">
+      <div class="fs">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3>Results <span id="dcnt" style="color:var(--accent)"></span></h3>
+          <button class="btn btn-success" onclick="show('generate')">Use These → Generate Videos</button>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>#</th><th>Product</th><th>Price</th><th>Rating</th><th>Commission</th><th>Est. Monthly</th><th>Quality</th></tr></thead>
+          <tbody id="dtb"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GENERATE -->
+  <div id="page-generate" class="page">
+    <div class="ph"><h2>🎬 Generate Content</h2><p>Create 1080p videos + slideshows with voiceovers and text overlays</p></div>
+    <div class="fs">
+      <h3>Generation Settings</h3>
+      <div class="fg">
+        <div class="form-group"><label>Batch size</label><input type="number" id="gbatch" value="50" min="5" max="500"><span class="fhint">Start with 50 to test. 250 takes ~4–8 hrs on CPU.</span></div>
+        <div class="form-group"><label>Video / Slideshow split</label>
+          <input type="range" id="gsplit" min="0" max="100" value="60" oninput="document.getElementById('gsl').textContent=this.value+'% videos / '+(100-this.value)+'% slideshows'">
+          <div style="font-size:12px;color:var(--text2);margin-top:4px" id="gsl">60% videos / 40% slideshows</div>
+        </div>
+        <div class="form-group"><label>Voiceover engine</label>
+          <select><option value="gtts">gTTS — Google (free, natural)</option><option value="edge_tts">edge-tts — Microsoft (best quality)</option><option value="pyttsx3">pyttsx3 — Offline (no internet)</option></select>
+        </div>
+      </div>
+      <div class="acts"><button class="btn btn-primary" onclick="runGenerate()">🎬 Start Generating</button><span id="gest" style="color:var(--text2);font-size:13px;align-self:center">~4 min for 50 pieces</span></div>
+    </div>
+    <div id="gen-prog" class="hidden">
+      <div class="fs">
+        <h3>Progress</h3>
+        <div style="display:flex;gap:24px;margin-bottom:12px;font-size:14px">
+          <div>🎬 Videos: <strong id="gvc">0</strong></div>
+          <div>🖼️ Slideshows: <strong id="gsc">0</strong></div>
+        </div>
+        <div class="pbar"><div class="pfill" id="gpf" style="width:0%"></div></div>
+        <div id="gmsg" style="font-size:13px;color:var(--text2);margin-top:8px"></div>
+        <div class="log" id="glog"></div>
+      </div>
+    </div>
+    <div id="gen-done" class="hidden">
+      <div class="alert success">✅ Generation complete! <span id="gdmsg"></span> <button class="btn btn-secondary" onclick="show('library')" style="margin-left:16px">View Library →</button></div>
+    </div>
+  </div>
+
+  <!-- LIBRARY -->
+  <div id="page-library" class="page">
+    <div class="ph"><h2>📁 Content Library</h2><p>All your generated videos and slideshows</p></div>
+    <div class="tabs">
+      <div class="tab active" onclick="libTab('v',this)">Videos</div>
+      <div class="tab" onclick="libTab('s',this)">Slideshows</div>
+    </div>
+    <div id="lib-v">
+      <div class="vgrid" id="vgrid"></div>
+      <div id="novid" style="color:var(--text2);font-size:14px">No videos yet — run Generate first.</div>
+    </div>
+    <div id="lib-s" class="hidden">
+      <div class="sgrid" id="sgrid"></div>
+      <div id="nosld" style="color:var(--text2);font-size:14px">No slideshows yet — run Generate first.</div>
+    </div>
+  </div>
+
+  <!-- SCHEDULE -->
+  <div id="page-schedule" class="page">
+    <div class="ph"><h2>📅 Post Scheduler</h2><p>Schedule and auto-post your content across platforms</p></div>
+    <div class="alert info">ℹ️ Auto-posting requires platform API credentials. Add them in <a href="#" onclick="show('settings')" style="color:var(--accent2)">Settings</a>.</div>
+    <div class="fs">
+      <h3>Schedule Settings</h3>
+      <div class="fg">
+        <div class="form-group"><label>Posts per day</label><select><option>2/day</option><option selected>4/day</option><option>6/day</option></select></div>
+        <div class="form-group"><label>Campaign length</label><select><option>30 days</option><option selected>60 days</option><option>90 days</option></select></div>
+        <div class="form-group"><label>Platforms</label>
+          <div class="cbg">
+            <label class="cbi"><input type="checkbox" checked> TikTok</label>
+            <label class="cbi"><input type="checkbox"> Instagram</label>
+            <label class="cbi"><input type="checkbox"> YouTube Shorts</label>
+          </div>
+        </div>
+      </div>
+      <div class="acts"><button class="btn btn-primary" onclick="buildSched()">📅 Build Schedule</button></div>
+    </div>
+    <div id="sched-res" class="hidden">
+      <div class="fs">
+        <h3>Schedule Queue</h3>
+        <div style="display:flex;gap:24px;margin-bottom:16px;font-size:14px">
+          <span>📋 Total: <strong id="stotal">0</strong></span>
+          <span>⏳ Pending: <strong id="spend">0</strong></span>
+          <span>✅ Posted: <strong id="spost">0</strong></span>
+        </div>
+        <div class="tw"><table>
+          <thead><tr><th>Platform</th><th>Scheduled</th><th>Product</th><th>Status</th></tr></thead>
+          <tbody id="stb"></tbody>
+        </table></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="page-settings" class="page">
+    <div class="ph"><h2>⚙️ Settings</h2><p>Configure your affiliate credentials and preferences</p></div>
+    <div id="saved-msg" class="alert success hidden">✅ Settings saved!</div>
+    <div class="fs"><h3>💰 Amazon Associates</h3>
+      <div class="fg">
+        <div class="form-group"><label>Associates Tag (required)</label><input type="text" id="cfg-tag" placeholder="yourname-20"><span class="fhint">Free at affiliate-program.amazon.com</span></div>
+        <div class="form-group"><label>Min commission %</label><select id="cfg-comm"><option value="1">1% (include all)</option><option value="3" selected>3% (recommended)</option><option value="5">5% (high commission only)</option><option value="8">8% (luxury/beauty only)</option></select></div>
+      </div>
+    </div>
+    <div class="fs"><h3>🎬 Video Generation</h3>
+      <div class="fg">
+        <div class="form-group"><label>Default batch size</label><input type="number" id="cfg-batch" value="250"></div>
+        <div class="form-group"><label>Voiceover</label><select id="cfg-tts"><option value="gtts">gTTS (free, natural)</option><option value="edge_tts">edge-tts (best quality)</option><option value="pyttsx3">pyttsx3 (offline)</option></select></div>
+      </div>
+    </div>
+    <div class="fs"><h3>📱 TikTok API</h3>
+      <div class="fg">
+        <div class="form-group"><label>Access Token</label><input type="password" id="cfg-tok" placeholder="Leave blank to post manually"><span class="fhint">Get from developers.tiktok.com</span></div>
+      </div>
+    </div>
+    <div class="fs"><h3>📅 Default Schedule</h3>
+      <div class="fg">
+        <div class="form-group"><label>Posts per day</label><select id="cfg-ppd"><option>2</option><option selected>4</option><option>6</option></select></div>
+        <div class="form-group"><label>Campaign days</label><input type="number" id="cfg-days" value="60"></div>
+      </div>
+    </div>
+    <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
+  </div>
+
+</main>
+
+<!-- Modal -->
+<div class="modal-ov" id="modal" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <span class="modal-close" onclick="closeModal()">✕ Close</span>
+    <div class="modal-body">
+      <strong id="modal-title"></strong>
+      <p id="modal-body"></p>
+    </div>
+  </div>
+</div>
+
+<script>
+// ── Nav ─────────────────────────────────────────────────────
+function show(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if (n.textContent.trim().toLowerCase().includes(name)) n.classList.add('active');
+  });
+  if (name === 'library') loadLibrary();
+}
+
+// ── Discover (demo simulation) ───────────────────────────────
+const DEMO_PRODUCTS = [
+  {t:'Niacinamide 12% + Zinc Face Serum',cat:'Beauty',price:12.99,rating:4.7,reviews:18420,comm:10,est:3885,q:'excellent'},
+  {t:'Collagen Peptides Powder Supplement',cat:'Health',price:34.95,rating:4.6,reviews:12300,comm:4.5,est:2362,q:'excellent'},
+  {t:'Silicone Kitchen Utensil Set (6-Piece)',cat:'Kitchen',price:18.99,rating:4.8,reviews:9870,comm:4.5,est:1282,q:'good'},
+  {t:'Stainless Steel Water Bottle 32oz',cat:'Sports',price:24.99,rating:4.7,reviews:22100,comm:3,est:1124,q:'good'},
+  {t:'Wireless Earbuds Pro with Noise Cancel',cat:'Electronics',price:49.99,rating:4.5,reviews:8600,comm:4,est:2999,q:'good'},
+  {t:'Vitamin C Serum for Face Anti-Aging',cat:'Beauty',price:19.99,rating:4.6,reviews:31200,comm:10,est:2998,q:'excellent'},
+  {t:'Resistance Bands Set for Exercise',cat:'Sports',price:22.99,rating:4.8,reviews:15600,comm:3,est:1034,q:'good'},
+  {t:'Bamboo Cutting Board with Juice Groove',cat:'Kitchen',price:29.99,rating:4.7,reviews:7800,comm:4.5,est:2025,q:'good'},
+  {t:'Probiotic 60 Billion CFU Capsules',cat:'Health',price:27.99,rating:4.5,reviews:9200,comm:4.5,est:1889,q:'good'},
+  {t:'Electric Spin Scrubber Brush for Bath',cat:'Home',price:39.99,rating:4.6,reviews:5400,comm:3,est:1799,q:'fair'},
+  {t:'Smart LED Strip Lights 32.8ft',cat:'Electronics',price:19.99,rating:4.4,reviews:43000,comm:4,est:1199,q:'good'},
+  {t:'Facial Roller Gua Sha Set',cat:'Beauty',price:15.99,rating:4.7,reviews:26700,comm:10,est:2398,q:'excellent'},
+];
+
+function runDiscover() {
+  document.getElementById('disc-prog').classList.remove('hidden');
+  document.getElementById('disc-res').classList.add('hidden');
+  const log = document.getElementById('dlog');
+  log.innerHTML = '';
+  const fill = document.getElementById('dpf');
+  const msgs = [
+    '> Connecting to Amazon Best Sellers...',
+    '> Scraping Beauty category (page 1/2)...',
+    '> Scraping Health category (page 1/2)...',
+    '> Scraping Kitchen category (page 1/2)...',
+    '> Scraping Electronics category (page 1/2)...',
+    '> Found 48 products. Checking affiliate rates...',
+    '> Querying TikTok Creative Center for trending hashtags...',
+    '> Boosting viral scores for trending products...',
+    '> 12 products passed "fair" affiliate filter.',
+    '> Saving discovery_results.json...',
+    '> ✅ Done! Found 12 qualified products.'
+  ];
+  let i = 0;
+  const iv = setInterval(() => {
+    if (i < msgs.length) {
+      log.innerHTML += `<div class="log-line">${msgs[i]}</div>`;
+      log.scrollTop = log.scrollHeight;
+      fill.style.width = Math.round((i / msgs.length) * 100) + '%';
+      i++;
+    } else {
+      clearInterval(iv);
+      fill.style.width = '100%';
+      showDiscoverResults();
+      document.getElementById('sv').textContent = '0';
+    }
+  }, 600);
+}
+
+function showDiscoverResults() {
+  document.getElementById('disc-res').classList.remove('hidden');
+  document.getElementById('dcnt').textContent = `(${DEMO_PRODUCTS.length})`;
+  document.getElementById('dtb').innerHTML = DEMO_PRODUCTS.map((p, i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td><div style="font-weight:500">${p.t}</div><div style="font-size:11px;color:var(--text2)">${p.cat}</div></td>
+      <td>$${p.price}</td>
+      <td>⭐ ${p.rating} (${p.reviews.toLocaleString()})</td>
+      <td>${p.comm}% = $${(p.price*p.comm/100).toFixed(2)}</td>
+      <td style="color:var(--green)">$${p.est.toLocaleString()}/mo</td>
+      <td><span class="badge ${p.q}">${p.q}</span></td>
+    </tr>`).join('');
+}
+
+// ── Generate (demo simulation) ───────────────────────────────
+function runGenerate() {
+  document.getElementById('gen-prog').classList.remove('hidden');
+  document.getElementById('gen-done').classList.add('hidden');
+  const log = document.getElementById('glog');
+  log.innerHTML = '';
+  let vc = 0, sc = 0, pct = 0;
+  const batch = parseInt(document.getElementById('gbatch').value) || 50;
+  const vTarget = Math.ceil(batch * 0.6);
+  const sTarget = batch - vTarget;
+
+  const steps = [
+    () => { log.innerHTML += `<div class="log-line">> Starting: ${batch} pieces from 12 products</div>`; },
+    () => { log.innerHTML += `<div class="log-line">> Fetching product images...</div>`; },
+    () => { log.innerHTML += `<div class="log-line">> Generating TTS voiceover: "POV you found the best beauty product..."</div>`; },
+    () => { vc++; document.getElementById('gvc').textContent=vc; log.innerHTML += `<div class="log-line" style="color:#88ffaa">> ✓ Video ${vc}: Niacinamide 12% Serum</div>`; pct=Math.round(vc/vTarget*60); document.getElementById('gpf').style.width=pct+'%'; document.getElementById('gmsg').textContent=`Processing product ${vc}/${vTarget}...`; },
+    () => { vc++; document.getElementById('gvc').textContent=vc; log.innerHTML += `<div class="log-line" style="color:#88ffaa">> ✓ Video ${vc}: Collagen Peptides Powder</div>`; },
+    () => { vc++; document.getElementById('gvc').textContent=vc; log.innerHTML += `<div class="log-line" style="color:#88ffaa">> ✓ Video ${vc}: Vitamin C Serum</div>`; },
+    () => { sc++; document.getElementById('gsc').textContent=sc; log.innerHTML += `<div class="log-line" style="color:#aaddff">> ✓ Slideshow ${sc}: Wireless Earbuds Pro</div>`; pct=70; document.getElementById('gpf').style.width=pct+'%'; },
+    () => { sc++; document.getElementById('gsc').textContent=sc; log.innerHTML += `<div class="log-line" style="color:#aaddff">> ✓ Slideshow ${sc}: Smart LED Strip Lights</div>`; pct=85; document.getElementById('gpf').style.width=pct+'%'; },
+    () => { log.innerHTML += `<div class="log-line">> Encoding final videos with FFmpeg (CRF 18, 1080p)...</div>`; },
+    () => {
+      document.getElementById('gpf').style.width='100%';
+      document.getElementById('sv').textContent = vc;
+      document.getElementById('ss').textContent = sc;
+      document.getElementById('gen-done').classList.remove('hidden');
+      document.getElementById('gdmsg').textContent = `${vc} videos + ${sc} slideshows ready.`;
+    },
+  ];
+  let i = 0;
+  const iv = setInterval(() => {
+    if (i < steps.length) { steps[i](); log.scrollTop = log.scrollHeight; i++; }
+    else clearInterval(iv);
+  }, 900);
+}
+
+// ── Library ──────────────────────────────────────────────────
+const DEMO_VIDEOS = [
+  {n:'niacinamide_serum_v1.mp4',s:'9.2 MB',c:'#7c3aed'},
+  {n:'collagen_powder_v1.mp4',s:'10.1 MB',c:'#06b6d4'},
+  {n:'vitamin_c_serum_v1.mp4',s:'8.8 MB',c:'#10b981'},
+  {n:'wireless_earbuds_v1.mp4',s:'11.3 MB',c:'#f59e0b'},
+  {n:'resistance_bands_v1.mp4',s:'9.7 MB',c:'#ef4444'},
+  {n:'led_strip_lights_v1.mp4',s:'10.5 MB',c:'#8b5cf6'},
+];
+const DEMO_SLIDES = ['🌸','💊','🎧','💡','🏋️','🍳','💧','✨'];
+
+function loadLibrary() {
+  const vc = parseInt(document.getElementById('sv').textContent) || 0;
+  const sc = parseInt(document.getElementById('ss').textContent) || 0;
+  document.getElementById('novid').classList.toggle('hidden', vc > 0);
+  document.getElementById('nosld').classList.toggle('hidden', sc > 0);
+  if (vc > 0) {
+    document.getElementById('vgrid').innerHTML = DEMO_VIDEOS.slice(0, vc).map(v => `
+      <div class="vc" onclick="openModal('${v.n}','1080×1920 · 30fps · H.264 · ${v.s}')">
+        <div class="vt" style="background:linear-gradient(135deg,${v.c}88,${v.c}22)">🎬</div>
+        <div class="vi"><div class="vn">${v.n}</div><div class="vs">${v.s} · 1080p</div></div>
+      </div>`).join('');
+  }
+  if (sc > 0) {
+    document.getElementById('sgrid').innerHTML = DEMO_SLIDES.slice(0, sc * 3).map(e => `
+      <div class="sc"><div class="sc-inner" style="background:linear-gradient(135deg,#7c3aed22,#06b6d422)">${e}</div></div>`).join('');
+  }
+}
+
+function libTab(t, el) {
+  document.querySelectorAll('.tab').forEach(x => x.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('lib-v').classList.toggle('hidden', t !== 'v');
+  document.getElementById('lib-s').classList.toggle('hidden', t !== 's');
+}
+
+// ── Schedule ─────────────────────────────────────────────────
+function buildSched() {
+  const vc = parseInt(document.getElementById('sv').textContent) || 0;
+  if (vc === 0) { alert('Generate videos first!'); return; }
+  const total = 120;
+  document.getElementById('stotal').textContent = total;
+  document.getElementById('spend').textContent = total;
+  document.getElementById('spost').textContent = 0;
+  const now = new Date();
+  const rows = [];
+  for (let i = 0; i < 10; i++) {
+    const d = new Date(now.getTime() + i * 6 * 3600000);
+    rows.push(`<tr>
+      <td>tiktok</td>
+      <td>${d.toLocaleDateString()} ${d.getHours().toString().padStart(2,'0')}:00</td>
+      <td>${DEMO_PRODUCTS[i % DEMO_PRODUCTS.length].t.substring(0,35)}</td>
+      <td><span class="badge fair">pending</span></td>
+    </tr>`);
+  }
+  document.getElementById('stb').innerHTML = rows.join('');
+  document.getElementById('sched-res').classList.remove('hidden');
+  document.getElementById('sp').textContent = total;
+}
+
+// ── Settings ─────────────────────────────────────────────────
+function saveSettings() {
+  const tag = document.getElementById('cfg-tag').value;
+  document.getElementById('saved-msg').classList.remove('hidden');
+  setTimeout(() => document.getElementById('saved-msg').classList.add('hidden'), 3000);
+  if (tag) {
+    document.querySelector('.sys .srow:nth-child(2) span:last-child').innerHTML = '<span class="dot green"></span>Ready';
+  }
+}
+
+// ── Modal ─────────────────────────────────────────────────────
+function openModal(title, body) {
+  document.getElementById('modal-title').textContent = title;
+  document.getElementById('modal-body').textContent = body;
+  document.getElementById('modal').classList.add('open');
+}
+function closeModal() { document.getElementById('modal').classList.remove('open'); }
+</script>
+</body>
+</html>
