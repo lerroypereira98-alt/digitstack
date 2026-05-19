@@ -1,0 +1,1021 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>UGC Video Cloner</title>
+  <style>
+    /* ── Reset & Base ─────────────────────────────── */
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+    :root {
+      --bg: #0d0d14;
+      --bg2: #14141f;
+      --bg3: #1c1c2e;
+      --border: #2a2a40;
+      --accent: #7c3aed;
+      --accent2: #06b6d4;
+      --green: #10b981;
+      --red: #ef4444;
+      --yellow: #f59e0b;
+      --text: #e2e2f0;
+      --text2: #8888aa;
+      --radius: 12px;
+    }
+    body {
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+      min-height: 100vh;
+      display: flex;
+    }
+
+    /* ── Sidebar ──────────────────────────────────── */
+    .sidebar {
+      width: 220px;
+      background: var(--bg2);
+      border-right: 1px solid var(--border);
+      padding: 24px 0;
+      flex-shrink: 0;
+      display: flex;
+      flex-direction: column;
+      position: fixed;
+      height: 100vh;
+      z-index: 10;
+    }
+    .logo {
+      padding: 0 20px 24px;
+      border-bottom: 1px solid var(--border);
+    }
+    .logo h1 { font-size: 15px; font-weight: 700; color: #fff; }
+    .logo span { font-size: 12px; color: var(--text2); }
+    .nav { padding: 16px 0; flex: 1; }
+    .nav-item {
+      display: flex;
+      align-items: center;
+      gap: 10px;
+      padding: 10px 20px;
+      cursor: pointer;
+      font-size: 14px;
+      color: var(--text2);
+      border-left: 3px solid transparent;
+      transition: all 0.15s;
+    }
+    .nav-item:hover { background: var(--bg3); color: var(--text); }
+    .nav-item.active { border-left-color: var(--accent); color: #fff; background: var(--bg3); }
+    .nav-item .icon { font-size: 18px; width: 22px; text-align: center; }
+
+    .system-status {
+      padding: 16px 20px;
+      border-top: 1px solid var(--border);
+      font-size: 12px;
+    }
+    .status-row { display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px; color: var(--text2); }
+    .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+    .dot.green { background: var(--green); }
+    .dot.red { background: var(--red); }
+    .dot.yellow { background: var(--yellow); }
+
+    /* ── Main Content ─────────────────────────────── */
+    .main {
+      margin-left: 220px;
+      flex: 1;
+      padding: 32px;
+      max-width: 1200px;
+    }
+    .page { display: none; }
+    .page.active { display: block; }
+
+    .page-header { margin-bottom: 28px; }
+    .page-header h2 { font-size: 24px; font-weight: 700; margin-bottom: 6px; }
+    .page-header p { color: var(--text2); font-size: 14px; }
+
+    /* ── Cards ────────────────────────────────────── */
+    .cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 16px; margin-bottom: 28px; }
+    .card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 20px;
+    }
+    .card .card-label { font-size: 12px; color: var(--text2); margin-bottom: 8px; text-transform: uppercase; letter-spacing: 0.5px; }
+    .card .card-value { font-size: 32px; font-weight: 700; color: #fff; }
+    .card .card-sub { font-size: 12px; color: var(--text2); margin-top: 4px; }
+
+    /* ── Buttons ──────────────────────────────────── */
+    .btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      border: none;
+      cursor: pointer;
+      transition: all 0.15s;
+    }
+    .btn-primary { background: var(--accent); color: #fff; }
+    .btn-primary:hover { background: #6d28d9; }
+    .btn-secondary { background: var(--bg3); color: var(--text); border: 1px solid var(--border); }
+    .btn-secondary:hover { background: var(--border); }
+    .btn-success { background: var(--green); color: #fff; }
+    .btn-danger { background: var(--red); color: #fff; }
+    .btn:disabled { opacity: 0.5; cursor: not-allowed; }
+
+    /* ── Forms ────────────────────────────────────── */
+    .form-section { background: var(--bg2); border: 1px solid var(--border); border-radius: var(--radius); padding: 24px; margin-bottom: 20px; }
+    .form-section h3 { font-size: 16px; margin-bottom: 20px; font-weight: 600; }
+    .form-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 16px; }
+    .form-group { display: flex; flex-direction: column; gap: 6px; }
+    .form-group label { font-size: 13px; color: var(--text2); font-weight: 500; }
+    .form-group input, .form-group select, .form-group textarea {
+      background: var(--bg3);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      color: var(--text);
+      padding: 10px 12px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.15s;
+    }
+    .form-group input:focus, .form-group select:focus { border-color: var(--accent); }
+    .form-hint { font-size: 11px; color: var(--text2); margin-top: 2px; }
+    .checkbox-group { display: flex; flex-wrap: wrap; gap: 10px; }
+    .checkbox-item { display: flex; align-items: center; gap: 6px; cursor: pointer; font-size: 13px; }
+    .checkbox-item input[type=checkbox] { accent-color: var(--accent); width: 16px; height: 16px; }
+
+    /* ── Progress ─────────────────────────────────── */
+    .progress-bar { background: var(--bg3); border-radius: 999px; height: 8px; overflow: hidden; margin: 12px 0; }
+    .progress-fill { height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 999px; transition: width 0.3s; }
+
+    /* ── Log console ──────────────────────────────── */
+    .log-console {
+      background: #0a0a12;
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      padding: 16px;
+      font-family: 'Monaco', 'Consolas', monospace;
+      font-size: 12px;
+      color: #88ffaa;
+      height: 200px;
+      overflow-y: auto;
+      margin-top: 16px;
+    }
+    .log-console .log-line { margin-bottom: 4px; }
+    .log-console .log-error { color: #ff6666; }
+    .log-console .log-done { color: #66ffcc; font-weight: bold; }
+
+    /* ── Tables ───────────────────────────────────── */
+    .table-wrap { overflow-x: auto; }
+    table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    thead tr { border-bottom: 1px solid var(--border); }
+    th { padding: 10px 14px; color: var(--text2); font-weight: 500; text-align: left; }
+    td { padding: 10px 14px; border-bottom: 1px solid #1e1e2e; }
+    tr:hover td { background: var(--bg3); }
+    .badge {
+      display: inline-block;
+      padding: 2px 8px;
+      border-radius: 999px;
+      font-size: 11px;
+      font-weight: 600;
+    }
+    .badge.excellent { background: #065f46; color: #6ee7b7; }
+    .badge.good { background: #1e3a5f; color: #93c5fd; }
+    .badge.fair { background: #3b2100; color: #fcd34d; }
+
+    /* ── Video grid ───────────────────────────────── */
+    .video-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(160px, 1fr)); gap: 16px; }
+    .video-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      overflow: hidden;
+      cursor: pointer;
+      transition: transform 0.15s;
+    }
+    .video-card:hover { transform: translateY(-2px); border-color: var(--accent); }
+    .video-thumb {
+      width: 100%;
+      aspect-ratio: 9/16;
+      background: var(--bg3);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 40px;
+      position: relative;
+    }
+    .video-thumb video { width: 100%; height: 100%; object-fit: cover; }
+    .video-info { padding: 10px; }
+    .video-name { font-size: 11px; color: var(--text2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .video-size { font-size: 11px; color: var(--text2); margin-top: 2px; }
+
+    /* ── Slide grid ─────────────────────────────────── */
+    .slide-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(140px, 1fr)); gap: 12px; }
+    .slide-card {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 8px;
+      overflow: hidden;
+    }
+    .slide-card img { width: 100%; aspect-ratio: 9/16; object-fit: cover; display: block; }
+
+    /* ── Modal ────────────────────────────────────── */
+    .modal-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.8);
+      display: flex; align-items: center; justify-content: center; z-index: 100;
+      display: none;
+    }
+    .modal-overlay.open { display: flex; }
+    .modal {
+      background: var(--bg2);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 0;
+      max-width: 400px;
+      width: 90%;
+      overflow: hidden;
+    }
+    .modal video { width: 100%; display: block; }
+    .modal-close { padding: 12px 16px; cursor: pointer; font-size: 13px; color: var(--text2); text-align: right; }
+
+    /* ── Alerts ───────────────────────────────────── */
+    .alert { padding: 12px 16px; border-radius: 8px; font-size: 13px; margin-bottom: 16px; }
+    .alert.success { background: #052e16; border: 1px solid #065f46; color: #6ee7b7; }
+    .alert.error { background: #2d0000; border: 1px solid #7f1d1d; color: #fca5a5; }
+    .alert.info { background: #0c1a3a; border: 1px solid #1e3a8a; color: #93c5fd; }
+    .alert.warning { background: #1c1000; border: 1px solid #78350f; color: #fcd34d; }
+    .hidden { display: none !important; }
+
+    /* ── Tabs ─────────────────────────────────────── */
+    .tabs { display: flex; gap: 4px; margin-bottom: 20px; background: var(--bg2); border: 1px solid var(--border); border-radius: 8px; padding: 4px; width: fit-content; }
+    .tab { padding: 8px 18px; border-radius: 6px; cursor: pointer; font-size: 13px; color: var(--text2); }
+    .tab.active { background: var(--accent); color: #fff; }
+
+    /* ── Range slider ─────────────────────────────── */
+    input[type=range] { accent-color: var(--accent); width: 100%; }
+    .range-label { display: flex; justify-content: space-between; font-size: 12px; color: var(--text2); margin-top: 4px; }
+
+    /* ── Actions row ──────────────────────────────── */
+    .actions { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 20px; }
+    .section-divider { border: none; border-top: 1px solid var(--border); margin: 24px 0; }
+  </style>
+</head>
+<body>
+
+<!-- Sidebar -->
+<nav class="sidebar">
+  <div class="logo">
+    <h1>🎬 UGC Cloner</h1>
+    <span>Free · Local · Automated</span>
+  </div>
+  <div class="nav">
+    <div class="nav-item active" onclick="showPage('dashboard')">
+      <span class="icon">📊</span> Dashboard
+    </div>
+    <div class="nav-item" onclick="showPage('discover')">
+      <span class="icon">🔍</span> Discover
+    </div>
+    <div class="nav-item" onclick="showPage('generate')">
+      <span class="icon">🎬</span> Generate
+    </div>
+    <div class="nav-item" onclick="showPage('library')">
+      <span class="icon">📁</span> Library
+    </div>
+    <div class="nav-item" onclick="showPage('schedule')">
+      <span class="icon">📅</span> Schedule
+    </div>
+    <div class="nav-item" onclick="showPage('settings')">
+      <span class="icon">⚙️</span> Settings
+    </div>
+  </div>
+  <div class="system-status">
+    <div class="status-row">
+      <span>FFmpeg</span>
+      <span id="ffmpeg-status">checking...</span>
+    </div>
+    <div class="status-row">
+      <span>Config</span>
+      <span id="config-status">checking...</span>
+    </div>
+  </div>
+</nav>
+
+<!-- Main Content -->
+<main class="main">
+
+  <!-- DASHBOARD -->
+  <div id="page-dashboard" class="page active">
+    <div class="page-header">
+      <h2>Dashboard</h2>
+      <p>Your UGC automation hub — $0/month, runs on your machine</p>
+    </div>
+
+    <div class="cards">
+      <div class="card">
+        <div class="card-label">Videos Generated</div>
+        <div class="card-value" id="stat-videos">0</div>
+        <div class="card-sub">1080p vertical</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Slideshows</div>
+        <div class="card-value" id="stat-slides">0</div>
+        <div class="card-sub">carousel-ready</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Posts Scheduled</div>
+        <div class="card-value" id="stat-scheduled">0</div>
+        <div class="card-sub">across platforms</div>
+      </div>
+      <div class="card">
+        <div class="card-label">Operating Cost</div>
+        <div class="card-value" style="color: var(--green);">$0</div>
+        <div class="card-sub">100% local</div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>🚀 Quick Start</h3>
+      <p style="color:var(--text2);font-size:14px;margin-bottom:20px;">
+        Follow these steps in order to create and schedule 200-300 videos.
+      </p>
+      <div style="display:flex;flex-direction:column;gap:14px;">
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">1</div>
+          <div>
+            <div style="font-weight:600;margin-bottom:2px">Set up your Amazon Associates tag</div>
+            <div style="font-size:13px;color:var(--text2)">Go to Settings → paste your affiliate tag → Save</div>
+          </div>
+          <button class="btn btn-secondary" onclick="showPage('settings')" style="margin-left:auto">Settings →</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">2</div>
+          <div>
+            <div style="font-weight:600;margin-bottom:2px">Discover viral products</div>
+            <div style="font-size:13px;color:var(--text2)">Scrape Amazon + TikTok for high-commission trending products</div>
+          </div>
+          <button class="btn btn-secondary" onclick="showPage('discover')" style="margin-left:auto">Discover →</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">3</div>
+          <div>
+            <div style="font-weight:600;margin-bottom:2px">Generate videos + slideshows</div>
+            <div style="font-size:13px;color:var(--text2)">Creates 1080p videos with voiceover, Ken Burns, text overlays</div>
+          </div>
+          <button class="btn btn-secondary" onclick="showPage('generate')" style="margin-left:auto">Generate →</button>
+        </div>
+        <div style="display:flex;align-items:center;gap:16px;">
+          <div style="width:32px;height:32px;border-radius:50%;background:var(--accent);display:flex;align-items:center;justify-content:center;font-weight:700;flex-shrink:0">4</div>
+          <div>
+            <div style="font-weight:600;margin-bottom:2px">Schedule &amp; post automatically</div>
+            <div style="font-size:13px;color:var(--text2)">Schedule 4 posts/day across TikTok, Instagram, YouTube Shorts</div>
+          </div>
+          <button class="btn btn-secondary" onclick="showPage('schedule')" style="margin-left:auto">Schedule →</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- DISCOVER -->
+  <div id="page-discover" class="page">
+    <div class="page-header">
+      <h2>🔍 Discover Products</h2>
+      <p>Find trending products with the best affiliate commissions from Amazon + TikTok</p>
+    </div>
+
+    <div class="form-section">
+      <h3>Scraper Settings</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Categories to scrape</label>
+          <div class="checkbox-group" id="cat-checkboxes">
+            <label class="checkbox-item"><input type="checkbox" value="Beauty" checked> Beauty</label>
+            <label class="checkbox-item"><input type="checkbox" value="Health" checked> Health</label>
+            <label class="checkbox-item"><input type="checkbox" value="Kitchen" checked> Kitchen</label>
+            <label class="checkbox-item"><input type="checkbox" value="Electronics" checked> Electronics</label>
+            <label class="checkbox-item"><input type="checkbox" value="Toys"> Toys</label>
+            <label class="checkbox-item"><input type="checkbox" value="Sports"> Sports</label>
+            <label class="checkbox-item"><input type="checkbox" value="Pet Supplies"> Pet Supplies</label>
+            <label class="checkbox-item"><input type="checkbox" value="Baby"> Baby</label>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Pages per category</label>
+          <select id="disc-pages">
+            <option value="1">1 page (~20 products)</option>
+            <option value="2" selected>2 pages (~40 products)</option>
+            <option value="3">3 pages (~60 products)</option>
+          </select>
+          <span class="form-hint">More pages = more products, slower scrape</span>
+        </div>
+        <div class="form-group">
+          <label>Max products to return</label>
+          <select id="disc-limit">
+            <option value="30">30 products</option>
+            <option value="60" selected>60 products</option>
+            <option value="100">100 products</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-discover" onclick="startDiscover()">
+          🔍 Start Discovery
+        </button>
+      </div>
+
+      <div id="discover-progress" class="hidden">
+        <div class="progress-bar"><div class="progress-fill" id="disc-progress-fill" style="width:0%"></div></div>
+        <div class="log-console" id="disc-log"></div>
+      </div>
+    </div>
+
+    <div id="discover-results" class="hidden">
+      <div class="form-section">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+          <h3>Results <span id="disc-count" style="color:var(--accent)"></span></h3>
+          <button class="btn btn-success" onclick="showPage('generate')">Use These → Generate Videos</button>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead><tr>
+              <th>#</th>
+              <th>Product</th>
+              <th>Price</th>
+              <th>Rating</th>
+              <th>Commission</th>
+              <th>Est. Monthly</th>
+              <th>Quality</th>
+            </tr></thead>
+            <tbody id="disc-table-body"></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- GENERATE -->
+  <div id="page-generate" class="page">
+    <div class="page-header">
+      <h2>🎬 Generate Content</h2>
+      <p>Create 1080p videos + slideshows with voiceovers and text overlays</p>
+    </div>
+
+    <div id="gen-no-products" class="alert info hidden">
+      No products discovered yet. <a href="#" onclick="showPage('discover')" style="color:var(--accent2)">Run discovery first →</a>
+    </div>
+
+    <div class="form-section">
+      <h3>Generation Settings</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Batch size (total videos + slideshows)</label>
+          <input type="number" id="gen-batch" value="50" min="5" max="500">
+          <span class="form-hint">Start with 50 to test. 250 takes ~4-8 hours.</span>
+        </div>
+        <div class="form-group">
+          <label>Video / Slideshow split</label>
+          <input type="range" id="gen-split" min="0" max="100" value="60"
+            oninput="document.getElementById('gen-split-label').textContent = this.value + '% videos / '+(100-this.value)+'% slideshows'">
+          <div class="range-label">
+            <span id="gen-split-label">60% videos / 40% slideshows</span>
+          </div>
+        </div>
+        <div class="form-group">
+          <label>Voiceover engine</label>
+          <select id="gen-tts">
+            <option value="gtts">gTTS — Google TTS (free, needs internet, natural)</option>
+            <option value="edge_tts">edge-tts — Microsoft (very natural, free)</option>
+            <option value="pyttsx3">pyttsx3 — Offline (no internet, robotic)</option>
+          </select>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" id="btn-generate" onclick="startGenerate()">
+          🎬 Start Generating
+        </button>
+        <span style="color:var(--text2);font-size:13px;align-self:center" id="gen-time-est"></span>
+      </div>
+    </div>
+
+    <div id="gen-progress-section" class="hidden">
+      <div class="form-section">
+        <h3>Progress</h3>
+        <div style="display:flex;gap:24px;margin-bottom:12px">
+          <div>🎬 Videos: <strong id="gen-videos-count">0</strong></div>
+          <div>🖼️ Slideshows: <strong id="gen-slides-count">0</strong></div>
+        </div>
+        <div class="progress-bar">
+          <div class="progress-fill" id="gen-progress-fill" style="width:0%"></div>
+        </div>
+        <div id="gen-progress-msg" style="font-size:13px;color:var(--text2);margin-top:8px"></div>
+        <div class="log-console" id="gen-log"></div>
+      </div>
+    </div>
+
+    <div id="gen-done-section" class="hidden">
+      <div class="alert success">
+        ✅ Generation complete! <span id="gen-done-msg"></span>
+        <button class="btn btn-secondary" onclick="showPage('library')" style="margin-left:16px">View Library →</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- LIBRARY -->
+  <div id="page-library" class="page">
+    <div class="page-header">
+      <h2>📁 Content Library</h2>
+      <p>All your generated videos and slideshows</p>
+    </div>
+
+    <div class="tabs">
+      <div class="tab active" onclick="switchTab('videos')">Videos</div>
+      <div class="tab" onclick="switchTab('slides')">Slideshows</div>
+    </div>
+
+    <div id="lib-videos">
+      <div id="video-grid-wrap">
+        <div style="color:var(--text2);font-size:14px" id="no-videos-msg">No videos yet. Go to Generate to create some.</div>
+        <div class="video-grid" id="video-grid"></div>
+      </div>
+    </div>
+
+    <div id="lib-slides" class="hidden">
+      <div style="color:var(--text2);font-size:14px" id="no-slides-msg" class="hidden">No slideshows yet.</div>
+      <div class="slide-grid" id="slide-grid"></div>
+    </div>
+  </div>
+
+  <!-- SCHEDULE -->
+  <div id="page-schedule" class="page">
+    <div class="page-header">
+      <h2>📅 Post Scheduler</h2>
+      <p>Schedule and auto-post your content across platforms</p>
+    </div>
+
+    <div class="alert info">
+      ℹ️ Auto-posting requires platform API credentials. Add them in <a href="#" onclick="showPage('settings')" style="color:var(--accent2)">Settings</a>. Without credentials, you can still export the schedule and post manually.
+    </div>
+
+    <div class="form-section">
+      <h3>Schedule Settings</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Posts per day (per platform)</label>
+          <select id="sched-ppd">
+            <option value="2">2 posts/day</option>
+            <option value="4" selected>4 posts/day</option>
+            <option value="6">6 posts/day</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Campaign length</label>
+          <select id="sched-days">
+            <option value="30">30 days</option>
+            <option value="60" selected>60 days</option>
+            <option value="90">90 days</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Platforms</label>
+          <div class="checkbox-group">
+            <label class="checkbox-item"><input type="checkbox" id="plat-tiktok" value="tiktok" checked> TikTok</label>
+            <label class="checkbox-item"><input type="checkbox" id="plat-ig" value="instagram"> Instagram</label>
+            <label class="checkbox-item"><input type="checkbox" id="plat-yt" value="youtube_shorts"> YouTube Shorts</label>
+          </div>
+        </div>
+      </div>
+      <div class="actions">
+        <button class="btn btn-primary" onclick="buildSchedule()">📅 Build Schedule</button>
+        <button class="btn btn-secondary" onclick="runScheduleDryRun()">👁️ Preview Posts</button>
+      </div>
+    </div>
+
+    <div class="form-section" id="sched-results" style="display:none">
+      <h3>Schedule Queue</h3>
+      <div style="display:flex;gap:24px;margin-bottom:16px;font-size:14px">
+        <span>📋 Total: <strong id="sched-total">0</strong></span>
+        <span>⏳ Pending: <strong id="sched-pending">0</strong></span>
+        <span>✅ Posted: <strong id="sched-posted">0</strong></span>
+        <span>❌ Failed: <strong id="sched-failed">0</strong></span>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>Platform</th><th>Scheduled</th><th>Product</th><th>Status</th></tr></thead>
+          <tbody id="sched-table"></tbody>
+        </table>
+      </div>
+    </div>
+  </div>
+
+  <!-- SETTINGS -->
+  <div id="page-settings" class="page">
+    <div class="page-header">
+      <h2>⚙️ Settings</h2>
+      <p>Configure your affiliate credentials and generation preferences</p>
+    </div>
+
+    <div id="settings-saved" class="alert success hidden">✅ Settings saved!</div>
+
+    <div class="form-section">
+      <h3>💰 Amazon Associates</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Associates Tag (required for affiliate links)</label>
+          <input type="text" id="cfg-tag" placeholder="yourname-20">
+          <span class="form-hint">Get this from <a href="https://affiliate-program.amazon.com" target="_blank" style="color:var(--accent2)">affiliate-program.amazon.com</a></span>
+        </div>
+        <div class="form-group">
+          <label>Minimum commission %</label>
+          <select id="cfg-mincomm">
+            <option value="1">1% (include all)</option>
+            <option value="3" selected>3% (recommended)</option>
+            <option value="5">5% (high commission only)</option>
+            <option value="8">8% (luxury/beauty only)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>🎬 Video Generation</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Default batch size</label>
+          <input type="number" id="cfg-batch" value="250" min="10" max="1000">
+        </div>
+        <div class="form-group">
+          <label>Voiceover engine</label>
+          <select id="cfg-tts">
+            <option value="gtts">gTTS — Google (free, natural, needs internet)</option>
+            <option value="edge_tts">edge-tts — Microsoft (best quality, free)</option>
+            <option value="pyttsx3">pyttsx3 — Offline (no internet)</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>📱 TikTok API (for auto-posting)</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Access Token</label>
+          <input type="password" id="cfg-tiktok-token" placeholder="Leave blank if posting manually">
+          <span class="form-hint">Get from <a href="https://developers.tiktok.com" target="_blank" style="color:var(--accent2)">TikTok Developer Portal</a></span>
+        </div>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>📅 Default Schedule</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Posts per day</label>
+          <select id="cfg-ppd">
+            <option value="2">2 posts/day</option>
+            <option value="4" selected>4 posts/day</option>
+            <option value="6">6 posts/day</option>
+          </select>
+        </div>
+        <div class="form-group">
+          <label>Campaign length (days)</label>
+          <input type="number" id="cfg-days" value="60" min="7" max="365">
+        </div>
+      </div>
+    </div>
+
+    <button class="btn btn-primary" onclick="saveSettings()">💾 Save Settings</button>
+  </div>
+
+</main>
+
+<!-- Video Modal -->
+<div class="modal-overlay" id="video-modal" onclick="closeModal()">
+  <div class="modal" onclick="event.stopPropagation()">
+    <div class="modal-close" onclick="closeModal()">✕ Close</div>
+    <video id="modal-video" controls></video>
+  </div>
+</div>
+
+<script>
+const API = '';  // same origin
+
+// ── Navigation ─────────────────────────────────────────────
+function showPage(name) {
+  document.querySelectorAll('.page').forEach(p => p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
+  document.getElementById('page-' + name).classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n => {
+    if (n.textContent.trim().toLowerCase().includes(name.toLowerCase())) {
+      n.classList.add('active');
+    }
+  });
+  if (name === 'library') loadLibrary();
+  if (name === 'schedule') loadSchedule();
+  if (name === 'settings') loadSettings();
+  if (name === 'generate') checkProducts();
+}
+
+function switchTab(tab) {
+  document.querySelectorAll('.tab').forEach(t => t.classList.remove('active'));
+  event.target.classList.add('active');
+  document.getElementById('lib-videos').classList.toggle('hidden', tab !== 'videos');
+  document.getElementById('lib-slides').classList.toggle('hidden', tab !== 'slides');
+}
+
+// ── System status check ────────────────────────────────────
+async function checkStatus() {
+  try {
+    const r = await fetch(API + '/api/status');
+    const d = await r.json();
+    document.getElementById('ffmpeg-status').innerHTML =
+      d.ffmpeg ? '<span class="dot green"></span> OK' : '<span class="dot red"></span> Missing';
+    document.getElementById('config-status').innerHTML =
+      d.configured ? '<span class="dot green"></span> Ready' : '<span class="dot yellow"></span> Needs tag';
+    document.getElementById('stat-videos').textContent = d.stats.videos || 0;
+    document.getElementById('stat-slides').textContent = d.stats.slideshows || 0;
+  } catch(e) {}
+}
+
+// ── Discover ───────────────────────────────────────────────
+async function startDiscover() {
+  const cats = [...document.querySelectorAll('#cat-checkboxes input:checked')].map(c => c.value);
+  if (!cats.length) { alert('Select at least one category'); return; }
+
+  const btn = document.getElementById('btn-discover');
+  btn.disabled = true;
+  btn.textContent = '⏳ Discovering...';
+  document.getElementById('discover-progress').classList.remove('hidden');
+  document.getElementById('discover-results').classList.add('hidden');
+  const logEl = document.getElementById('disc-log');
+  logEl.innerHTML = '';
+
+  const body = {
+    categories: cats,
+    pages_per_cat: parseInt(document.getElementById('disc-pages').value),
+    limit: parseInt(document.getElementById('disc-limit').value),
+  };
+
+  const r = await fetch(API + '/api/discover/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  const { job_id } = await r.json();
+
+  const es = new EventSource(API + `/api/jobs/${job_id}/stream`);
+  es.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    logEl.innerHTML += `<div class="log-line">&gt; ${d.msg}</div>`;
+    logEl.scrollTop = logEl.scrollHeight;
+  });
+  es.addEventListener('done', e => {
+    es.close();
+    const d = JSON.parse(e.data);
+    logEl.innerHTML += `<div class="log-done">&gt; Done! Found ${d.count} products.</div>`;
+    btn.disabled = false;
+    btn.textContent = '🔍 Start Discovery';
+    showDiscoverResults(d.results);
+    checkStatus();
+  });
+  es.addEventListener('error', e => {
+    es.close();
+    const d = JSON.parse(e.data);
+    logEl.innerHTML += `<div class="log-error">&gt; Error: ${d.msg}</div>`;
+    btn.disabled = false;
+    btn.textContent = '🔍 Start Discovery';
+  });
+}
+
+function showDiscoverResults(results) {
+  document.getElementById('discover-results').classList.remove('hidden');
+  document.getElementById('disc-count').textContent = `(${results.length})`;
+  const tbody = document.getElementById('disc-table-body');
+  tbody.innerHTML = results.slice(0, 60).map((p, i) => `
+    <tr>
+      <td>${i+1}</td>
+      <td style="max-width:280px">
+        <div style="font-weight:500">${p.title.substring(0,60)}${p.title.length>60?'...':''}</div>
+        <div style="font-size:11px;color:var(--text2)">${p.category}</div>
+      </td>
+      <td>$${p.price.toFixed(2)}</td>
+      <td>⭐ ${p.rating} (${(p.reviews||0).toLocaleString()})</td>
+      <td>${p.commission_pct}% = $${p.commission_usd.toFixed(2)}</td>
+      <td style="color:var(--green)">$${(p.est_monthly||0).toLocaleString()}/mo</td>
+      <td><span class="badge ${p.quality}">${p.quality}</span></td>
+    </tr>
+  `).join('');
+}
+
+async function loadDiscoverResults() {
+  const r = await fetch(API + '/api/discover/results');
+  const results = await r.json();
+  if (results.length) showDiscoverResults(results);
+}
+
+// ── Generate ───────────────────────────────────────────────
+async function checkProducts() {
+  const r = await fetch(API + '/api/discover/results');
+  const results = await r.json();
+  document.getElementById('gen-no-products').classList.toggle('hidden', results.length > 0);
+  updateTimeEst();
+}
+
+function updateTimeEst() {
+  const batch = parseInt(document.getElementById('gen-batch').value) || 50;
+  const vids = Math.ceil(batch * 0.6);
+  const slides = batch - vids;
+  const secs = vids * 45 + slides * 2 + batch * 3;
+  const hrs = Math.floor(secs / 3600);
+  const mins = Math.floor((secs % 3600) / 60);
+  const est = hrs > 0 ? `~${hrs}h ${mins}m` : `~${mins}m`;
+  document.getElementById('gen-time-est').textContent = `Estimated time: ${est}`;
+}
+document.addEventListener('DOMContentLoaded', () => {
+  document.getElementById('gen-batch')?.addEventListener('input', updateTimeEst);
+});
+
+async function startGenerate() {
+  const btn = document.getElementById('btn-generate');
+  btn.disabled = true;
+  btn.textContent = '⏳ Generating...';
+  document.getElementById('gen-progress-section').classList.remove('hidden');
+  document.getElementById('gen-done-section').classList.add('hidden');
+  const log = document.getElementById('gen-log');
+  log.innerHTML = '';
+
+  const body = {
+    batch_size: parseInt(document.getElementById('gen-batch').value),
+    video_split: parseInt(document.getElementById('gen-split').value) / 100,
+    tts_engine: document.getElementById('gen-tts').value,
+  };
+
+  const r = await fetch(API + '/api/generate/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  const { job_id } = await r.json();
+
+  const es = new EventSource(API + `/api/jobs/${job_id}/stream`);
+  es.addEventListener('progress', e => {
+    const d = JSON.parse(e.data);
+    document.getElementById('gen-progress-fill').style.width = d.pct + '%';
+    document.getElementById('gen-progress-msg').textContent = d.msg;
+    document.getElementById('gen-videos-count').textContent = d.videos;
+    document.getElementById('gen-slides-count').textContent = d.slides;
+  });
+  es.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-line">&gt; ${d.msg}</div>`;
+    log.scrollTop = log.scrollHeight;
+  });
+  es.addEventListener('done', e => {
+    es.close();
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-done">&gt; Done! ${d.total} pieces created.</div>`;
+    btn.disabled = false;
+    btn.textContent = '🎬 Start Generating';
+    document.getElementById('gen-progress-fill').style.width = '100%';
+    document.getElementById('gen-done-section').classList.remove('hidden');
+    document.getElementById('gen-done-msg').textContent = `${d.videos} videos + ${d.slides} slideshows ready.`;
+    checkStatus();
+  });
+  es.addEventListener('error', e => {
+    es.close();
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-error">&gt; Error: ${d.msg}</div>`;
+    btn.disabled = false;
+    btn.textContent = '🎬 Start Generating';
+  });
+}
+
+// ── Library ────────────────────────────────────────────────
+async function loadLibrary() {
+  const [vr, sr] = await Promise.all([
+    fetch(API + '/api/library/videos').then(r => r.json()),
+    fetch(API + '/api/library/slides').then(r => r.json()),
+  ]);
+
+  const vgrid = document.getElementById('video-grid');
+  document.getElementById('no-videos-msg').classList.toggle('hidden', vr.length > 0);
+  vgrid.innerHTML = vr.map(v => `
+    <div class="video-card" onclick="playVideo('${v.url}')">
+      <div class="video-thumb">🎬</div>
+      <div class="video-info">
+        <div class="video-name">${v.name}</div>
+        <div class="video-size">${v.size_mb} MB</div>
+      </div>
+    </div>
+  `).join('');
+
+  const sgrid = document.getElementById('slide-grid');
+  document.getElementById('no-slides-msg').classList.toggle('hidden', sr.length > 0);
+  sgrid.innerHTML = sr.map(s => `
+    <div class="slide-card">
+      <img src="${s.url}" loading="lazy" onerror="this.src=''" alt="${s.name}">
+    </div>
+  `).join('');
+}
+
+function playVideo(url) {
+  document.getElementById('modal-video').src = url;
+  document.getElementById('video-modal').classList.add('open');
+}
+function closeModal() {
+  document.getElementById('video-modal').classList.remove('open');
+  document.getElementById('modal-video').src = '';
+}
+
+// ── Schedule ───────────────────────────────────────────────
+async function loadSchedule() {
+  try {
+    const r = await fetch(API + '/api/schedule');
+    const d = await r.json();
+    const stats = d.stats || {};
+    document.getElementById('sched-total').textContent = stats.total || 0;
+    document.getElementById('sched-pending').textContent = stats.pending || 0;
+    document.getElementById('sched-posted').textContent = stats.posted || 0;
+    document.getElementById('sched-failed').textContent = stats.failed || 0;
+
+    if ((stats.total || 0) > 0) {
+      document.getElementById('sched-results').style.display = 'block';
+      const posts = d.pending || [];
+      document.getElementById('sched-table').innerHTML = posts.slice(0, 30).map(p => `
+        <tr>
+          <td>${p.platform}</td>
+          <td>${p.local_time || ''}</td>
+          <td>${(p.content?.product_title || '').substring(0, 40)}</td>
+          <td><span class="badge fair">${p.status}</span></td>
+        </tr>
+      `).join('');
+    }
+  } catch(e) {}
+}
+
+async function buildSchedule() {
+  const platforms = [];
+  if (document.getElementById('plat-tiktok').checked) platforms.push('tiktok');
+  if (document.getElementById('plat-ig').checked) platforms.push('instagram');
+  if (document.getElementById('plat-yt').checked) platforms.push('youtube_shorts');
+
+  const body = {
+    posts_per_day: parseInt(document.getElementById('sched-ppd').value),
+    campaign_days: parseInt(document.getElementById('sched-days').value),
+    platforms,
+    dry_run: false,
+  };
+
+  const r = await fetch(API + '/api/schedule/build', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    const d = await r.json();
+    alert(`✅ Scheduled ${d.scheduled} posts!`);
+    loadSchedule();
+  } else {
+    const e = await r.json();
+    alert('Error: ' + (e.detail || JSON.stringify(e)));
+  }
+}
+
+async function runScheduleDryRun() {
+  alert('Dry run: posts will be previewed in the console. Check terminal output.');
+  await fetch(API + '/api/schedule/run?dry_run=true', { method: 'POST' });
+}
+
+// ── Settings ───────────────────────────────────────────────
+async function loadSettings() {
+  const r = await fetch(API + '/api/config');
+  const d = await r.json();
+  document.getElementById('cfg-tag').value = d.partner_tag || '';
+  document.getElementById('cfg-mincomm').value = d.min_commission_pct || 3;
+  document.getElementById('cfg-tts').value = d.tts_engine || 'gtts';
+  document.getElementById('cfg-batch').value = d.batch_size || 250;
+  document.getElementById('cfg-ppd').value = d.posts_per_day || 4;
+  document.getElementById('cfg-days').value = d.campaign_days || 60;
+  document.getElementById('cfg-tiktok-token').value = d.tiktok_access_token || '';
+}
+
+async function saveSettings() {
+  const body = {
+    partner_tag: document.getElementById('cfg-tag').value,
+    min_commission_pct: parseFloat(document.getElementById('cfg-mincomm').value),
+    tts_engine: document.getElementById('cfg-tts').value,
+    batch_size: parseInt(document.getElementById('cfg-batch').value),
+    posts_per_day: parseInt(document.getElementById('cfg-ppd').value),
+    campaign_days: parseInt(document.getElementById('cfg-days').value),
+    platforms: ['tiktok'],
+    tiktok_access_token: document.getElementById('cfg-tiktok-token').value,
+  };
+  const r = await fetch(API + '/api/config', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  if (r.ok) {
+    document.getElementById('settings-saved').classList.remove('hidden');
+    setTimeout(() => document.getElementById('settings-saved').classList.add('hidden'), 3000);
+    checkStatus();
+  }
+}
+
+// ── Boot ───────────────────────────────────────────────────
+checkStatus();
+setInterval(checkStatus, 10000);
+loadDiscoverResults();
+</script>
+</body>
+</html>
