@@ -115,6 +115,13 @@ class LTXGenerateRequest(BaseModel):
     duration: int = 15
 
 
+class AnimateDiffRequest(BaseModel):
+    product_title: str
+    image_path: str = ""  # Path relative to output/images/
+    motion_scale: float = 1.0
+    num_frames: int = 16
+
+
 # ── Pages ─────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -469,6 +476,79 @@ def _ltx_generate_sync(job_id: str, body: LTXGenerateRequest):
             _emit(job_id, "error", {"msg": "LTX-Video generation failed or server unavailable"})
     except Exception as e:
         logger.exception("LTX generation failed")
+        jobs[job_id]["status"] = "error"
+        _emit(job_id, "error", {"msg": str(e)})
+
+
+# ── API: AnimateDiff video generation ──────────────────────────────────────────
+
+@app.post("/api/animatediff/generate")
+async def animatediff_generate(body: AnimateDiffRequest, background_tasks: BackgroundTasks):
+    """Generate UGC video via local AnimateDiff (M1 Mac optimized)."""
+    job_id = _new_job("animatediff_generate")
+    background_tasks.add_task(_run_in_thread, job_id, _animatediff_generate_sync, body)
+    return {"job_id": job_id}
+
+
+def _animatediff_generate_sync(job_id: str, body: AnimateDiffRequest):
+    try:
+        from generators.animatediff_generator import AnimateDiffGenerator, AnimationStyle
+        from pathlib import Path
+
+        _emit(job_id, "log", {"msg": f"Animating {body.product_title}..."})
+
+        # Resolve image path
+        if body.image_path:
+            image_path = OUTPUT_DIR / "images" / body.image_path
+        else:
+            # Look for any image for this product
+            images = list((OUTPUT_DIR / "images").glob(f"*{body.product_title[:10]}*"))
+            if images:
+                image_path = images[0]
+            else:
+                _emit(job_id, "error", {"msg": "No product image found"})
+                jobs[job_id]["status"] = "error"
+                return
+
+        if not image_path.exists():
+            _emit(job_id, "error", {"msg": f"Image not found: {image_path}"})
+            jobs[job_id]["status"] = "error"
+            return
+
+        gen = AnimateDiffGenerator(output_dir=str(OUTPUT_DIR / "videos"))
+
+        style = AnimationStyle(
+            motion_scale=body.motion_scale,
+            num_frames=body.num_frames,
+            steps=20,
+            guidance_scale=7.5,
+        )
+
+        def emit_fn(event: str, data: dict):
+            _emit(job_id, event, data)
+
+        output_path = gen.generate(
+            image_path=image_path,
+            product_title=body.product_title,
+            output_name=f"anim_{body.product_title[:20]}",
+            style=style,
+            emit_fn=emit_fn,
+        )
+
+        if output_path and output_path.exists():
+            size_mb = output_path.stat().st_size / 1_048_576
+            jobs[job_id]["status"] = "done"
+            _emit(job_id, "done", {
+                "file": str(output_path),
+                "name": output_path.name,
+                "size_mb": round(size_mb, 1),
+                "url": f"/output/videos/{output_path.name}",
+            })
+        else:
+            jobs[job_id]["status"] = "error"
+            _emit(job_id, "error", {"msg": "AnimateDiff generation failed or ComfyUI unavailable"})
+    except Exception as e:
+        logger.exception("AnimateDiff generation failed")
         jobs[job_id]["status"] = "error"
         _emit(job_id, "error", {"msg": str(e)})
 
