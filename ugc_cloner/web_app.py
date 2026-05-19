@@ -107,6 +107,14 @@ class CloneRequest(BaseModel):
     affiliate_tag: str = ""
 
 
+class LTXGenerateRequest(BaseModel):
+    product_title: str
+    category: str = "Beauty"
+    hook: str = ""
+    cta: str = ""
+    duration: int = 15
+
+
 # ── Pages ─────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -412,6 +420,55 @@ def _clone_sync(job_id: str, body: CloneRequest):
             _emit(job_id, "error", {"msg": "Clone failed — check the URL and try again"})
     except Exception as e:
         logger.exception("Clone failed")
+        jobs[job_id]["status"] = "error"
+        _emit(job_id, "error", {"msg": str(e)})
+
+
+# ── API: LTX video generation ──────────────────────────────────────────────────
+
+@app.post("/api/ltx/generate")
+async def ltx_generate(body: LTXGenerateRequest, background_tasks: BackgroundTasks):
+    """Generate UGC video via local LTX-Video."""
+    job_id = _new_job("ltx_generate")
+    background_tasks.add_task(_run_in_thread, job_id, _ltx_generate_sync, body)
+    return {"job_id": job_id}
+
+
+def _ltx_generate_sync(job_id: str, body: LTXGenerateRequest):
+    try:
+        from generators.ltx_video_generator import LTXVideoGenerator, VideoPrompt
+
+        _emit(job_id, "log", {"msg": f"Generating UGC video: {body.product_title}"})
+
+        gen = LTXVideoGenerator(output_dir=str(OUTPUT_DIR / "videos"))
+
+        prompt = VideoPrompt(
+            product_title=body.product_title,
+            category=body.category,
+            hook=body.hook or f"POV: you found the best {body.category.lower()} product",
+            cta=body.cta or f"Get {body.product_title} now — limited stock 🔥",
+            duration=body.duration,
+        )
+
+        def emit_fn(event: str, data: dict):
+            _emit(job_id, event, data)
+
+        output_path = gen.generate(prompt, output_name=f"ugc_{body.product_title[:20]}", emit_fn=emit_fn)
+
+        if output_path and output_path.exists():
+            size_mb = output_path.stat().st_size / 1_048_576
+            jobs[job_id]["status"] = "done"
+            _emit(job_id, "done", {
+                "file": str(output_path),
+                "name": output_path.name,
+                "size_mb": round(size_mb, 1),
+                "url": f"/output/videos/{output_path.name}",
+            })
+        else:
+            jobs[job_id]["status"] = "error"
+            _emit(job_id, "error", {"msg": "LTX-Video generation failed or server unavailable"})
+    except Exception as e:
+        logger.exception("LTX generation failed")
         jobs[job_id]["status"] = "error"
         _emit(job_id, "error", {"msg": str(e)})
 
