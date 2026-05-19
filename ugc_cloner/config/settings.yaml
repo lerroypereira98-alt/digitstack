@@ -1,121 +1,83 @@
-# UGC Video Cloner - Configuration
-# Copy this file and fill in your credentials
-
-# ─── Amazon Affiliate ────────────────────────────────────────────────────────
 amazon:
-  access_key: ""          # AWS access key (PA-API)
-  secret_key: ""          # AWS secret key
-  partner_tag: ""         # Amazon Associates tag e.g. mystore-20
-  region: "us-east-1"
-  # Min commission rate to include a product (%)
-  min_commission_pct: 4.0
-  # Categories to scrape for viral potential
+  access_key: ''
+  secret_key: ''
+  partner_tag: test-20
+  region: us-east-1
+  min_commission_pct: 3.0
   categories:
-    - "Electronics"
-    - "Beauty"
-    - "Health"
-    - "Kitchen"
-    - "Toys"
-    - "Sports"
-  best_seller_pages: 3    # Pages to scrape per category
-
-# ─── TikTok ──────────────────────────────────────────────────────────────────
+  - Electronics
+  - Beauty
+  - Health
+  - Kitchen
+  - Toys
+  - Sports
+  best_seller_pages: 3
 tiktok:
-  # For posting: get from TikTok Developer portal
-  client_key: ""
-  client_secret: ""
-  access_token: ""
-  # Scraping: optional session_id cookie for TikTok Creative Center
-  session_id: ""
-  # Hashtags to mine for viral product content
+  client_key: ''
+  client_secret: ''
+  access_token: ''
+  session_id: ''
   viral_hashtags:
-    - "tiktokmademebuyit"
-    - "amazonfinds"
-    - "productreview"
-    - "ugc"
-    - "affiliatemarketing"
-  min_views_viral: 100000   # Minimum views to consider viral
-
-# ─── Content Generation ──────────────────────────────────────────────────────
+  - tiktokmademebuyit
+  - amazonfinds
+  - productreview
+  - ugc
+  - affiliatemarketing
+  min_views_viral: 100000
 generation:
-  batch_size: 250           # Total videos/slideshows to generate
-  video_split: 0.6          # 60% videos, 40% slideshows
-  video_duration_sec: 30    # Target duration for short-form videos
+  batch_size: 50
+  video_split: 0.6
+  video_duration_sec: 30
   resolution:
     width: 1080
-    height: 1920            # Vertical (9:16) for TikTok/Reels/Shorts
+    height: 1920
   fps: 30
-  # How many content pieces per product
   videos_per_product: 5
-
-  # TTS engine: "gtts" (free, needs internet) or "pyttsx3" (offline)
-  tts_engine: "gtts"
-  tts_language: "en"
-  tts_speed: 1.15           # Slightly faster sounds more UGC-native
-
-  # Stable Diffusion (optional, for AI image gen)
+  tts_engine: gtts
+  tts_language: en
+  tts_speed: 1.15
   use_stable_diffusion: false
-  sd_api_url: "http://127.0.0.1:7860"   # AUTOMATIC1111 local API
-
-# ─── Viral Hook Templates ────────────────────────────────────────────────────
+  sd_api_url: http://127.0.0.1:7860
 hooks:
   openers:
-    - "POV: You just found the best {category} product on Amazon"
-    - "I can't believe this {product} exists and it's only ${price}"
-    - "This {product} changed my life and I'm not exaggerating"
-    - "Amazon finds that feel illegal to know about"
-    - "Stop scrolling — you NEED to see this {product}"
-    - "I've been sleeping on this {product} for too long"
-    - "The {product} everyone is talking about — worth it?"
-    - "Rating viral TikTok {category} products so you don't have to"
+  - 'POV: You just found the best {category} product on Amazon'
+  - I can't believe this {product} exists and it's only ${price}
+  - This {product} changed my life and I'm not exaggerating
+  - Amazon finds that feel illegal to know about
+  - "Stop scrolling \u2014 you NEED to see this {product}"
+  - I've been sleeping on this {product} for too long
+  - "The {product} everyone is talking about \u2014 worth it?"
+  - Rating viral TikTok {category} products so you don't have to
   ctas:
-    - "Link in bio — affiliate commission helps support this channel"
-    - "I'll put the link in my bio, it's literally {discount}% off right now"
-    - "Grab it before this deal ends — link in bio"
-    - "Check my bio for the direct link to save you time"
-
-# ─── Posting Schedule ────────────────────────────────────────────────────────
+  - "Link in bio \u2014 affiliate commission helps support this channel"
+  - I'll put the link in my bio, it's literally {discount}% off right now
+  - "Grab it before this deal ends \u2014 link in bio"
+  - Check my bio for the direct link to save you time
 scheduler:
-  # Platforms to post to
   platforms:
-    - tiktok
-    - instagram
-    - youtube_shorts
-  # Posts per day per platform
+  - tiktok
   posts_per_day: 4
-  # Best posting times (24h format, local time)
   posting_times:
-    - "07:00"
-    - "12:00"
-    - "17:00"
-    - "21:00"
-  timezone: "America/New_York"
-  # Days to spread the batch over
+  - 07:00
+  - '12:00'
+  - '17:00'
+  - '21:00'
+  timezone: America/New_York
   campaign_days: 60
-
-# ─── Instagram ───────────────────────────────────────────────────────────────
 instagram:
-  username: ""
-  password: ""
-  # Or use session file after first login
-  session_file: "output/.instagram_session.json"
-
-# ─── YouTube ─────────────────────────────────────────────────────────────────
+  username: ''
+  password: ''
+  session_file: output/.instagram_session.json
 youtube:
-  credentials_file: "config/youtube_credentials.json"
-  channel_id: ""
-
-# ─── Output ──────────────────────────────────────────────────────────────────
+  credentials_file: config/youtube_credentials.json
+  channel_id: ''
 output:
-  base_dir: "output"
-  videos_dir: "output/videos"
-  slideshows_dir: "output/slideshows"
-  images_dir: "output/images"
-  audio_dir: "output/audio"
-  # Keep source files after composition
+  base_dir: output
+  videos_dir: output/videos
+  slideshows_dir: output/slideshows
+  images_dir: output/images
+  audio_dir: output/audio
   keep_intermediates: false
-
-# ─── Logging ─────────────────────────────────────────────────────────────────
 logging:
-  level: "INFO"
-  file: "output/ugc_cloner.log"
+  level: INFO
+  file: output/ugc_cloner.log
