@@ -102,6 +102,7 @@
     <div class="nav-item" onclick="show('discover')"><span class="icon">🔍</span> Discover</div>
     <div class="nav-item" onclick="show('generate')"><span class="icon">🎬</span> Generate</div>
     <div class="nav-item" onclick="show('library')"><span class="icon">📁</span> Library</div>
+    <div class="nav-item" onclick="show('clone')"><span class="icon">🎭</span> Clone Video</div>
     <div class="nav-item" onclick="show('schedule')"><span class="icon">📅</span> Schedule</div>
     <div class="nav-item" onclick="show('settings')"><span class="icon">⚙️</span> Settings</div>
   </div>
@@ -222,6 +223,61 @@
     <div id="lib-s" class="hidden">
       <div class="sgrid" id="sgrid"></div>
       <div id="nosld" style="color:var(--text2);font-size:14px">No slideshows yet — run Generate first.</div>
+    </div>
+  </div>
+
+  <!-- CLONE VIDEO -->
+  <div id="page-clone" class="page">
+    <div class="ph"><h2>🎭 Clone a Viral Video</h2><p>Paste a TikTok / Instagram / YouTube URL — we copy its style and recreate it with your product</p></div>
+    <div class="alert info">ℹ️ <strong>Demo mode</strong> — this simulates the clone pipeline. In the real app (run locally), it downloads the actual video, analyzes pacing, and generates a 1080p clone with your product.</div>
+    <div class="fs">
+      <h3>🔗 Source Video</h3>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Viral Video URL (TikTok / Instagram / YouTube Shorts)</label>
+        <input type="url" id="clone-url" placeholder="https://www.tiktok.com/@user/video/1234567890" style="width:100%;background:var(--bg3);border:1px solid var(--border);border-radius:8px;color:var(--text);padding:10px 12px;font-size:14px;outline:none">
+        <span class="fhint">Works with TikTok, Instagram Reels, and YouTube Shorts</span>
+      </div>
+    </div>
+    <div class="fs">
+      <h3>📦 Your Product</h3>
+      <div class="fg">
+        <div class="form-group"><label>Product Title</label><input type="text" id="clone-title" placeholder="Amazing Vitamin C Serum"></div>
+        <div class="form-group"><label>Amazon ASIN (optional)</label><input type="text" id="clone-asin" placeholder="B08XY12345"><span class="fhint">Used to fetch product images</span></div>
+        <div class="form-group"><label>Price ($)</label><input type="number" id="clone-price" value="29.99" step="0.01" min="0"></div>
+        <div class="form-group"><label>Category</label>
+          <select id="clone-cat">
+            <option value="Beauty">Beauty</option>
+            <option value="Health">Health &amp; Personal Care</option>
+            <option value="Kitchen">Kitchen &amp; Home</option>
+            <option value="Electronics">Electronics</option>
+            <option value="Sports">Sports &amp; Outdoors</option>
+          </select>
+        </div>
+      </div>
+    </div>
+    <div class="acts"><button class="btn btn-primary" id="btn-clone" onclick="runClone()" style="font-size:15px;padding:12px 28px">🎭 Clone This Video</button></div>
+    <div id="clone-prog" class="hidden" style="margin-top:24px">
+      <div class="fs">
+        <h3>⚙️ Cloning in progress...</h3>
+        <div class="pbar"><div class="pfill" id="cpf" style="width:5%"></div></div>
+        <div id="clone-step" style="font-size:13px;color:var(--text2);margin:8px 0">Downloading video...</div>
+        <div class="log" id="clog"></div>
+      </div>
+    </div>
+    <div id="clone-done" class="hidden" style="margin-top:24px">
+      <div class="fs">
+        <div class="alert success" style="margin-bottom:16px">✅ Clone complete! Your video is ready.</div>
+        <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+          <div style="background:var(--bg3);border-radius:8px;width:160px;height:285px;display:flex;align-items:center;justify-content:center;font-size:48px;flex-shrink:0">🎬</div>
+          <div>
+            <div id="clone-fname" style="font-weight:600;margin-bottom:8px"></div>
+            <div style="font-size:13px;color:var(--text2);margin-bottom:8px">1080×1920 · 30fps · H.264</div>
+            <div style="font-size:13px;color:var(--text2);margin-bottom:16px" id="clone-fsize"></div>
+            <div class="alert info" style="font-size:12px;margin-bottom:12px">📌 In the full app, this file saves to <code>output/clones/</code> and appears in your Library.</div>
+            <button class="btn btn-success" onclick="show('library')">View in Library →</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -485,6 +541,62 @@ function saveSettings() {
   if (tag) {
     document.querySelector('.sys .srow:nth-child(2) span:last-child').innerHTML = '<span class="dot green"></span>Ready';
   }
+}
+
+// ── Clone Video (demo simulation) ────────────────────────────
+function runClone() {
+  const url = document.getElementById('clone-url').value.trim();
+  if (!url) { alert('Paste a TikTok / Instagram / YouTube URL first'); return; }
+  const title = document.getElementById('clone-title').value.trim() || 'Amazing Product';
+  const price = parseFloat(document.getElementById('clone-price').value) || 29.99;
+
+  const btn = document.getElementById('btn-clone');
+  btn.disabled = true;
+  btn.textContent = '⏳ Cloning...';
+  document.getElementById('clone-prog').classList.remove('hidden');
+  document.getElementById('clone-done').classList.add('hidden');
+  const log = document.getElementById('clog');
+  log.innerHTML = '';
+  document.getElementById('cpf').style.width = '5%';
+  document.getElementById('clone-step').textContent = 'Downloading video...';
+
+  const steps = [
+    { pct: 10, step: 'Downloading video...', msg: `> Downloading: ${url.substring(0, 60)}...` },
+    { pct: 25, step: 'Analyzing style...', msg: '> Running ffprobe for metadata and scene detection...' },
+    { pct: 30, step: 'Analyzing style...', msg: '> Style: 9:16 · 28s · 8 scenes · fast tempo' },
+    { pct: 45, step: 'Fetching product images...', msg: `> Fetching images for "${title}"...` },
+    { pct: 55, step: 'Generating UGC script...', msg: `> Hook: "POV you finally found the ${title} everyone's talking about 👀"` },
+    { pct: 65, step: 'Generating voiceover...', msg: '> Synthesizing TTS with gTTS engine...' },
+    { pct: 75, step: 'Composing video (Ken Burns)...', msg: '> FFmpeg: zoompan + drawtext overlays at 1080×1920, CRF 18...' },
+    { pct: 88, step: 'Composing video...', msg: `> Encoding scene 5/8 — price overlay $${price.toFixed(2)}...` },
+    { pct: 95, step: 'Finalizing...', msg: '> Muxing audio + video streams...' },
+    { pct: 100, step: 'Done!', msg: null },
+  ];
+
+  let i = 0;
+  const safeName = title.replace(/[^a-zA-Z0-9]/g, '_').substring(0, 20);
+  const fname = `clone_${safeName}_${url.slice(-6).replace(/[^a-z0-9]/gi,'x')}.mp4`;
+  const sizeMB = (8 + Math.random() * 5).toFixed(1);
+
+  const iv = setInterval(() => {
+    if (i >= steps.length) { clearInterval(iv); return; }
+    const s = steps[i++];
+    document.getElementById('cpf').style.width = s.pct + '%';
+    document.getElementById('clone-step').textContent = s.step;
+    if (s.msg) {
+      log.innerHTML += `<div class="log-line">${s.msg}</div>`;
+      log.scrollTop = log.scrollHeight;
+    }
+    if (s.pct === 100) {
+      log.innerHTML += `<div class="log-line" style="color:#66ffcc;font-weight:bold">> ✓ Clone complete: ${fname} (${sizeMB} MB)</div>`;
+      log.scrollTop = log.scrollHeight;
+      btn.disabled = false;
+      btn.textContent = '🎭 Clone This Video';
+      document.getElementById('clone-done').classList.remove('hidden');
+      document.getElementById('clone-fname').textContent = fname;
+      document.getElementById('clone-fsize').textContent = `${sizeMB} MB`;
+    }
+  }, 900);
 }
 
 // ── Modal ─────────────────────────────────────────────────────

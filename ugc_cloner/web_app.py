@@ -98,6 +98,15 @@ class ConfigUpdate(BaseModel):
     tiktok_access_token: str = ""
 
 
+class CloneRequest(BaseModel):
+    source_url: str
+    product_title: str = "Amazing Product"
+    product_asin: str = ""
+    product_price: float = 29.99
+    product_category: str = "Beauty"
+    affiliate_tag: str = ""
+
+
 # ── Pages ─────────────────────────────────────────────────────────────────────
 
 @app.get("/", response_class=HTMLResponse)
@@ -337,6 +346,72 @@ def _generate_sync(job_id: str, body: GenerateRequest):
         _emit(job_id, "done", {"videos": videos_made, "slides": slides_made, "total": videos_made + slides_made})
     except Exception as e:
         logger.exception("Generate failed")
+        jobs[job_id]["status"] = "error"
+        _emit(job_id, "error", {"msg": str(e)})
+
+
+# ── API: clone ────────────────────────────────────────────────────────────────
+
+@app.post("/api/clone/start")
+async def clone_start(body: CloneRequest, background_tasks: BackgroundTasks):
+    job_id = _new_job("clone")
+    background_tasks.add_task(_run_in_thread, job_id, _clone_sync, body)
+    return {"job_id": job_id}
+
+
+def _clone_sync(job_id: str, body: CloneRequest):
+    try:
+        cfg = load_config()
+
+        _emit(job_id, "log", {"msg": f"Starting clone of: {body.source_url}"})
+
+        from generators.video_cloner import VideoCloner
+        from agents.viral_finder import Product
+
+        product = Product(
+            title=body.product_title,
+            asin=body.product_asin,
+            price=body.product_price,
+            rating=4.5,
+            review_count=500,
+            category=body.product_category,
+            image_url="",
+            product_url="",
+            affiliate_url=f"https://www.amazon.com/dp/{body.product_asin}?tag={body.affiliate_tag or cfg.get('amazon', {}).get('partner_tag', 'test-20')}",
+            viral_score=80.0,
+            tags=[],
+        )
+
+        cloner = VideoCloner(cfg, output_dir=str(OUTPUT_DIR / "clones"))
+
+        def emit_fn(event: str, data: dict):
+            _emit(job_id, event, data)
+
+        output_path = cloner.clone(
+            source_url=body.source_url,
+            product=product,
+            emit_fn=emit_fn,
+        )
+
+        if output_path and output_path.exists():
+            size_mb = output_path.stat().st_size / 1_048_576
+            # Copy to videos dir so Library shows it
+            import shutil
+            dest = OUTPUT_DIR / "videos" / output_path.name
+            shutil.copy2(str(output_path), str(dest))
+
+            jobs[job_id]["status"] = "done"
+            _emit(job_id, "done", {
+                "file": str(dest),
+                "name": output_path.name,
+                "size_mb": round(size_mb, 1),
+                "url": f"/output/videos/{output_path.name}",
+            })
+        else:
+            jobs[job_id]["status"] = "error"
+            _emit(job_id, "error", {"msg": "Clone failed — check the URL and try again"})
+    except Exception as e:
+        logger.exception("Clone failed")
         jobs[job_id]["status"] = "error"
         _emit(job_id, "error", {"msg": str(e)})
 

@@ -281,6 +281,9 @@
     <div class="nav-item" onclick="showPage('library')">
       <span class="icon">📁</span> Library
     </div>
+    <div class="nav-item" onclick="showPage('clone')">
+      <span class="icon">🎭</span> Clone Video
+    </div>
     <div class="nav-item" onclick="showPage('schedule')">
       <span class="icon">📅</span> Schedule
     </div>
@@ -541,6 +544,90 @@
     <div id="lib-slides" class="hidden">
       <div style="color:var(--text2);font-size:14px" id="no-slides-msg" class="hidden">No slideshows yet.</div>
       <div class="slide-grid" id="slide-grid"></div>
+    </div>
+  </div>
+
+  <!-- CLONE VIDEO -->
+  <div id="page-clone" class="page">
+    <div class="page-header">
+      <h2>🎭 Clone a Viral Video</h2>
+      <p>Paste any TikTok, Instagram Reel, or YouTube Shorts URL — we'll copy its style and recreate it with your product</p>
+    </div>
+
+    <div class="alert info">
+      ℹ️ This downloads the viral video, analyzes its pacing &amp; style, then generates a brand-new video for your product using the same hook timing and transitions.
+    </div>
+
+    <div class="form-section">
+      <h3>🔗 Source Video</h3>
+      <div class="form-group" style="margin-bottom:16px">
+        <label>Viral Video URL (TikTok / Instagram / YouTube Shorts)</label>
+        <input type="url" id="clone-url" placeholder="https://www.tiktok.com/@user/video/1234567890">
+        <span class="form-hint">Works with TikTok, Instagram Reels, and YouTube Shorts links</span>
+      </div>
+    </div>
+
+    <div class="form-section">
+      <h3>📦 Your Product</h3>
+      <div class="form-grid">
+        <div class="form-group">
+          <label>Product Title</label>
+          <input type="text" id="clone-title" placeholder="Amazing Vitamin C Serum" value="">
+        </div>
+        <div class="form-group">
+          <label>Amazon ASIN (optional)</label>
+          <input type="text" id="clone-asin" placeholder="B08XY12345">
+          <span class="form-hint">Used to fetch product images automatically</span>
+        </div>
+        <div class="form-group">
+          <label>Price ($)</label>
+          <input type="number" id="clone-price" value="29.99" step="0.01" min="0">
+        </div>
+        <div class="form-group">
+          <label>Category</label>
+          <select id="clone-category">
+            <option value="Beauty">Beauty</option>
+            <option value="Health">Health &amp; Personal Care</option>
+            <option value="Kitchen">Kitchen &amp; Home</option>
+            <option value="Electronics">Electronics</option>
+            <option value="Clothing">Clothing &amp; Fashion</option>
+            <option value="Sports">Sports &amp; Outdoors</option>
+            <option value="Toys">Toys &amp; Games</option>
+          </select>
+        </div>
+      </div>
+    </div>
+
+    <div class="actions">
+      <button class="btn btn-primary" id="btn-clone" onclick="startClone()" style="font-size:16px;padding:12px 28px">
+        🎭 Clone This Video
+      </button>
+    </div>
+
+    <div id="clone-progress" class="hidden" style="margin-top:24px">
+      <div class="form-section">
+        <h3>⚙️ Cloning in progress...</h3>
+        <div class="progress-bar"><div class="progress-fill" id="clone-progress-fill" style="width:5%"></div></div>
+        <div id="clone-status-msg" style="font-size:13px;color:var(--text2);margin:8px 0">Starting...</div>
+        <div class="log-console" id="clone-log"></div>
+      </div>
+    </div>
+
+    <div id="clone-result" class="hidden" style="margin-top:24px">
+      <div class="form-section">
+        <div class="alert success" style="margin-bottom:16px">✅ Clone complete!</div>
+        <div style="display:flex;gap:20px;align-items:flex-start;flex-wrap:wrap">
+          <div style="background:var(--bg3);border-radius:8px;overflow:hidden;width:180px;flex-shrink:0">
+            <video id="clone-result-video" controls style="width:100%;display:block"></video>
+          </div>
+          <div>
+            <div id="clone-result-name" style="font-weight:600;margin-bottom:8px"></div>
+            <div id="clone-result-size" style="font-size:13px;color:var(--text2);margin-bottom:16px"></div>
+            <a id="clone-result-download" class="btn btn-success" download>⬇️ Download Video</a>
+            <button class="btn btn-secondary" style="margin-left:10px" onclick="showPage('library')">View in Library →</button>
+          </div>
+        </div>
+      </div>
     </div>
   </div>
 
@@ -1010,6 +1097,79 @@ async function saveSettings() {
     setTimeout(() => document.getElementById('settings-saved').classList.add('hidden'), 3000);
     checkStatus();
   }
+}
+
+// ── Clone Video ────────────────────────────────────────────
+async function startClone() {
+  const url = document.getElementById('clone-url').value.trim();
+  if (!url) { alert('Paste a TikTok / Instagram / YouTube URL first'); return; }
+  const title = document.getElementById('clone-title').value.trim() || 'Amazing Product';
+
+  const btn = document.getElementById('btn-clone');
+  btn.disabled = true;
+  btn.textContent = '⏳ Cloning...';
+  document.getElementById('clone-progress').classList.remove('hidden');
+  document.getElementById('clone-result').classList.add('hidden');
+  const log = document.getElementById('clone-log');
+  log.innerHTML = '';
+  document.getElementById('clone-status-msg').textContent = 'Downloading video...';
+  document.getElementById('clone-progress-fill').style.width = '5%';
+
+  const body = {
+    source_url: url,
+    product_title: title,
+    product_asin: document.getElementById('clone-asin').value.trim(),
+    product_price: parseFloat(document.getElementById('clone-price').value) || 29.99,
+    product_category: document.getElementById('clone-category').value,
+  };
+
+  const r = await fetch(API + '/api/clone/start', {
+    method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
+  });
+  const { job_id } = await r.json();
+
+  const steps = ['Downloading', 'Analyzing', 'Fetching images', 'Generating script', 'Voiceover', 'Composing'];
+  let stepIdx = 0;
+
+  const es = new EventSource(API + `/api/jobs/${job_id}/stream`);
+  es.addEventListener('log', e => {
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-line">&gt; ${d.msg}</div>`;
+    log.scrollTop = log.scrollHeight;
+    if (d.msg.includes('Analyzing')) { stepIdx = 1; }
+    else if (d.msg.includes('Fetching')) { stepIdx = 2; }
+    else if (d.msg.includes('script')) { stepIdx = 3; }
+    else if (d.msg.includes('voiceover') || d.msg.includes('Voiceover')) { stepIdx = 4; }
+    else if (d.msg.includes('Composing')) { stepIdx = 5; }
+    const pct = Math.min(10 + stepIdx * 15, 85);
+    document.getElementById('clone-progress-fill').style.width = pct + '%';
+    document.getElementById('clone-status-msg').textContent = steps[stepIdx] + '...';
+  });
+  es.addEventListener('done', e => {
+    es.close();
+    const d = JSON.parse(e.data);
+    document.getElementById('clone-progress-fill').style.width = '100%';
+    document.getElementById('clone-status-msg').textContent = 'Done!';
+    log.innerHTML += `<div class="log-done">&gt; Clone complete: ${d.name} (${d.size_mb} MB)</div>`;
+    btn.disabled = false;
+    btn.textContent = '🎭 Clone This Video';
+    document.getElementById('clone-result').classList.remove('hidden');
+    document.getElementById('clone-result-video').src = API + d.url;
+    document.getElementById('clone-result-name').textContent = d.name;
+    document.getElementById('clone-result-size').textContent = `${d.size_mb} MB`;
+    const dl = document.getElementById('clone-result-download');
+    dl.href = API + d.url;
+    dl.setAttribute('download', d.name);
+    checkStatus();
+  });
+  es.addEventListener('error', e => {
+    es.close();
+    const d = JSON.parse(e.data);
+    log.innerHTML += `<div class="log-error">&gt; Error: ${d.msg}</div>`;
+    document.getElementById('clone-status-msg').textContent = 'Failed — see error above';
+    btn.disabled = false;
+    btn.textContent = '🎭 Clone This Video';
+  });
 }
 
 // ── Boot ───────────────────────────────────────────────────
